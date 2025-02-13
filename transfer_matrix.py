@@ -24,7 +24,7 @@ def propagation_matrix(n_i, d_i, wavelength, theta_i):
     return torch.tensor([[torch.exp(-1j * delta_i), 0],
                          [0, torch.exp(1j * delta_i)]], dtype=torch.complex64)
 
-def interface_matrix(n_i, n_next, theta_i, theta_next, wavelength):
+def interface_matrix_s_pol(n_i, n_next, theta_i, theta_next, wavelength):
     """
     Computes the boundary transfer matrix between two media.
     n_i: Refractive index of the current layer
@@ -44,6 +44,26 @@ def interface_matrix(n_i, n_next, theta_i, theta_next, wavelength):
     return torch.tensor([[1 / t_ij, r_ij / t_ij],
                          [r_ij / t_ij, 1 / t_ij]], dtype=torch.complex64)
 
+def interface_matrix_p_pol(n_i, n_next, theta_i, theta_next, wavelength):
+    """
+    Computes the boundary transfer matrix between two media.
+    n_i: Refractive index of the current layer
+    n_next: Refractive index of the next layer
+    theta_i: Angle of propagation in the current layer
+    theta_next: Angle of propagation in the next layer
+    """
+    k_0 = 2*np.pi/wavelength
+    k_1z = n_i *k_0* torch.cos(theta_i)
+    k_1p = n_next *k_0* torch.cos(theta_i) #swapped n_i, n_next compared to s polarization
+    k_2p = n_i *k_0* torch.cos(theta_next)
+
+    r_ij = ((k_1p - k_2p) /
+            (k_1p + k_2p))
+    t_ij = (2 * k_1z /
+            (k_1p + k_2p))
+    
+    return torch.tensor([[1 / t_ij, r_ij / t_ij],
+                         [r_ij / t_ij, 1 / t_ij]], dtype=torch.complex64)
 
 def transfer_matrix(n, d, wavelengths, angles_of_incidence):
     """
@@ -71,9 +91,9 @@ def transfer_matrix(n, d, wavelengths, angles_of_incidence):
                 theta_next = snell_law(n_i, n_next, theta_i)
 
                 # Compute boundary matrices
-                T_in = interface_matrix(n[i - 1, w_idx] if i > 0 else n_i, n_i, angle_rad if i == 0 else theta_prev, theta_i, wlg)
+                T_in = interface_matrix_s_pol(n[i - 1, w_idx] if i > 0 else n_i, n_i, angle_rad if i == 0 else theta_prev, theta_i, wlg)
                 P_i = propagation_matrix(n_i, d_i, wlg, theta_i)
-                T_out = interface_matrix(n_i, n_next, theta_i, theta_next, wlg)
+                T_out = interface_matrix_p_pol(n_i, n_next, theta_i, theta_next, wlg)
                 
                 # Compute total matrix for the layer: T_in * P_i * T_out
                 M_layer = torch.matmul(T_in, torch.matmul(P_i, T_out))
