@@ -53,12 +53,14 @@ def transfer_matrix(n, d, wavelengths, angles_of_incidence):
     num_wavelengths = len(wavelengths)
     num_angles = len(angles_of_incidence)
     M_total = torch.zeros((num_wavelengths, num_angles, 2, 2), dtype=torch.complex64)
+    R = torch.zeros(num_wavelengths, num_angles)
+    T = torch.zeros(num_wavelengths, num_angles)
 
     for w_idx, wlg in enumerate(wavelengths):
         for a_idx, alpha in enumerate(angles_of_incidence):
-            # angle_rad = torch.tensor(np.deg2rad(alpha), dtype=torch.float32)
             angle_rad = torch.deg2rad(alpha)
             M_current = torch.eye(2, 2, dtype=torch.complex64)
+            theta_prev = alpha
 
             for i in range(len(n) - 1):
                 n_i, n_next = n[i, w_idx], n[i + 1, w_idx]
@@ -80,32 +82,28 @@ def transfer_matrix(n, d, wavelengths, angles_of_incidence):
                 theta_prev = theta_next  # Store angle for next iteration
 
             M_total[w_idx, a_idx] = M_current
+            R[w_idx, a_idx],T[w_idx, a_idx] = reflectance_transmittance(M_current, n[0, w_idx], n[-1, w_idx], alpha, theta_prev)
 
     return M_total
 
-def reflectance_transmittance(M_total, n):
+def reflectance_transmittance(T_matrix, n_i, n_exit, theta_in, theta_exit):
     """
     Calculate the reflectance and transmittance using the transfer matrices.
-    M_total: Transfer matrix of shape (num_wavelengths, num_angles, 2, 2)
-    n: Refractive indices of the layers
-    wavelengths: Wavelengths of light
+    Accounts for multilayer refraction effects when computing transmittance.
+    Parameters:
+    - T_matrix: Transfer matrix of shape (2, 2)
+    - n_i: Refractive indices of the first layers 
+    - n_exit: Refractive indices of the last layers 
+    - theta_in: angle of incidence at the first layer
+    - theta_exit: angle of transmission at the final layer
+    Returns:
+    - R: Reflectance 
+    - T: Transmittance 
     """
-    num_wavelengths, num_angles = M_total.shape[:2]
-    R = torch.zeros(num_wavelengths, num_angles)
-    T = torch.zeros(num_wavelengths, num_angles)
-
-    # Calculate reflectance and transmittance
-    for w_idx in range(num_wavelengths):
-        for a_idx in range(num_angles):
-            M = M_total[w_idx, a_idx]
-
-            # Reflection and transmission coefficients
-            r = M[1, 0] / M[0, 0]
-            t = 1 / M[0, 0]
-            # t = torch.linalg.det(M) / M[0,0]
-
-            R[w_idx, a_idx] = torch.abs(r)**2
-            T[w_idx, a_idx] = torch.abs(t)**2 * torch.real(n[-1, w_idx] / n[0, w_idx])
-
+    # Reflection and transmission coefficients
+    r = T_matrix[1, 0] / T_matrix[0, 0]
+    t = 1 / T_matrix[0, 0]
+    # Reflectance & Transmittance
+    R = torch.abs(r) ** 2
+    T = torch.abs(t) ** 2 * torch.real(n_exit * torch.cos(theta_exit)) / torch.real(n_i * torch.cos(theta_in))
     return R, T
-
