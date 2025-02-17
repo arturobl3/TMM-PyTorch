@@ -1,11 +1,11 @@
 import torch
 import numpy as np
 # Constants
-c = 3e8  # Speed of light in vacuum (m/s)
+c = 2,99792458e8  # Speed of light in vacuum (m/s)
 
-def propagation_matrix(n_i, d_i, wavelength, theta_i):
+def propagation_matrix(n_i, d_i, k_x, wavelength):
     """
-    Computes the propagation transfer matrix for s-polarization through a layer,
+    Computes the propagation transfer matrix for through a layer,
     in parallel for all wavelengths and angles.
     Parameters
     ----------
@@ -15,15 +15,17 @@ def propagation_matrix(n_i, d_i, wavelength, theta_i):
         Thickness of the layer. Must be broadcastable to n_i. E.g. shape: (num_wavelengths, 1) or (1,) or matching n_i
     wavelength : torch.Tensor
         Wavelength of light. Shape: (num_wavelengths, 1) or broadcastable with n_i
-    theta_i : torch.Tensor
-        Propagation angle in the layer. Shape: (num_wavelengths, num_angles)
+    k_x : torch.Tensor
+        Transversal component of the K-vector. Shape: (num_wavelengths, num_angles)
     Returns
     -------
     torch.Tensor
         Propagation matrices of shape (num_wavelengths, num_angles, 2, 2)
     """
+    k_2z = torch.sqrt(n_i**2 - k_x**2+0j)
+
     # Phase shift delta_i for each wavelength & angle
-    delta_i = (2 * np.pi * n_i * d_i / wavelength) * torch.cos(theta_i)
+    delta_i = (2 * np.pi / wavelength) * k_2z * d_i
 
     # Create an empty tensor for the result
     M_shape = delta_i.shape + (2, 2)
@@ -36,7 +38,7 @@ def propagation_matrix(n_i, d_i, wavelength, theta_i):
     return M
 
 
-def interface_matrix_s_pol(n_i, n_next, theta_i, theta_next):
+def interface_matrix_s_pol(n_i, n_next, k_x):
     """
     Computes the boundary (interface) transfer matrix between two media for s-polarization,
     in parallel for all wavelengths and angles.
@@ -44,12 +46,8 @@ def interface_matrix_s_pol(n_i, n_next, theta_i, theta_next):
     ----------
     n_i : torch.Tensor
         Refractive index of current layer. Shape: (num_wavelengths, num_angles)
-    n_next : torch.Tensor
-        Refractive index of next layer. Same shape as n_i
-    theta_i : torch.Tensor
-        Angle in current layer. Shape: (num_wavelengths, num_angles)
-    theta_next : torch.Tensor
-        Angle in the next layer. Same shape as theta_i
+    k_x : torch.Tensor
+        Transversal component of the K-vector. Shape: (num_wavelengths, num_angles)
     Returns
     -------
     torch.Tensor
@@ -57,8 +55,8 @@ def interface_matrix_s_pol(n_i, n_next, theta_i, theta_next):
     """
 
     # Wavevector components in each layer
-    k_1z = n_i * torch.cos(theta_i)
-    k_2z = n_next * torch.cos(theta_next)
+    k_1z = torch.sqrt(n_i**2 - k_x**2 +0j)
+    k_2z = torch.sqrt(n_next**2 - k_x**2 +0j)
 
     r_ij = (k_1z - k_2z) / (k_1z + k_2z)
     t_ij = (2 * k_1z) / (k_1z + k_2z)
@@ -76,7 +74,7 @@ def interface_matrix_s_pol(n_i, n_next, theta_i, theta_next):
 
     return M
 
-def interface_matrix_p_pol(n_i, n_next, theta_i, theta_next):
+def interface_matrix_p_pol(n_i, n_next, k_x):
     """
     Computes the boundary (interface) transfer matrix between two media for p-polarization,
     in parallel for all wavelengths and angles.
@@ -86,30 +84,25 @@ def interface_matrix_p_pol(n_i, n_next, theta_i, theta_next):
         Refractive index of current layer. Shape: (num_wavelengths, num_angles)
     n_next : torch.Tensor
         Refractive index of next layer. Same shape as n_i
-    theta_i : torch.Tensor
-        Angle in current layer. Shape: (num_wavelengths, num_angles)
-    theta_next : torch.Tensor
-        Angle in the next layer. Same shape as theta_i
+    k_x : torch.Tensor
+        Transversal component of the K-vector. Shape: (num_wavelengths, num_angles)
     Returns
     -------
     torch.Tensor
         Interface matrices of shape (num_wavelengths, num_angles, 2, 2)
     """
-
     # Wavevector components in each layer
-    k_1z = n_i * torch.cos(theta_i)
-    k_1p = n_next * torch.cos(theta_i)
-    k_2p = n_i * torch.cos(theta_next)
-
-    r_ij = (k_1p - k_2p) / (k_1p + k_2p)
-    t_ij = (2 * k_1z) / (k_1p + k_2p)
+    k_1z = torch.sqrt(n_i**2 - k_x**2 +0j)
+    k_2z = torch.sqrt(n_next**2 - k_x**2 +0j)
+    
+    r_ij = (n_next / n_i * k_1z - n_i / n_next * k_2z) / (n_next / n_i * k_1z + n_i / n_next * k_2z)
+    t_ij = (2 * k_1z) / (n_next / n_i * k_1z + n_i / n_next * k_2z)
 
     # Construct the tensor for the result
     M_shape = r_ij.shape + (2, 2)  # shape is (num_wavelengths, num_angles, 2, 2)
     M = torch.zeros(M_shape, dtype=torch.complex64)
 
     # Fill the matrix elements:
-
     M[..., 0, 0] = 1 / t_ij
     M[..., 0, 1] = r_ij / t_ij
     M[..., 1, 0] = r_ij / t_ij
@@ -118,7 +111,7 @@ def interface_matrix_p_pol(n_i, n_next, theta_i, theta_next):
     return M
 
 
-def reflectance_transmittance(M, n_incident, n_exit, theta_incident, theta_exit):
+def reflectance_transmittance(M, n_incident, n_exit, theta_incident):
     """
     Extract reflection and transmission coefficients from the transfer matrix M
     in parallel for all wavelengths and angles.
@@ -147,19 +140,19 @@ def reflectance_transmittance(M, n_incident, n_exit, theta_incident, theta_exit)
     """
     # Reflection and transmission coefficients from the matrix
     r = M[..., 1, 0] / M[..., 0, 0]
-    t = 1.0 / M[..., 0, 0]
+    t = torch.linalg.det(M) / M[..., 0, 0]
 
     # Reflectance
     R = torch.abs(r) ** 2
+    k_x = n_incident * torch.sin(theta_incident)
+    k_1z = n_incident * torch.cos(theta_incident)
+    k_2z = torch.sqrt(n_exit**2 - k_x**2 +0j)
 
     # Transmittance (for s-polarization), accounting for angle dependence
-    # T = |t|^2 * ( n_exit cos(theta_exit) ) / ( n_incident cos(theta_incident) )
-    T = (torch.abs(t) ** 2 * (
-            torch.real(n_exit * torch.cos(theta_exit)) /
-            torch.real(n_incident * torch.cos(theta_incident))))
+    # T = |t|^2 * ( k_2z/k_1z)
+    T = torch.abs(t) ** 2 * torch.real(k_2z / k_1z)
 
     return R, T
-
 
 def snell_law_vectorized(n1, n2, theta1):
     """
@@ -172,11 +165,10 @@ def snell_law_vectorized(n1, n2, theta1):
     theta2 = torch.arcsin(sin_theta2_clamped)
     return theta2
 
-def compute_transfer_matrix(n, d, wavelengths, angles, interface_fn, propagation_fn):
+def single_layer_transfer_matrix_s_pol(n, d, wavelengths, angles, k_x):
     """
-    Computes the total transfer matrix for a multilayer structure 
+    Computes the total transfer matrix for a single layer structure surrounded by air 
     over all wavelengths and angles in parallel (s-polarization).
-
     Parameters
     ----------
     n : torch.Tensor
@@ -187,68 +179,210 @@ def compute_transfer_matrix(n, d, wavelengths, angles, interface_fn, propagation
     wavelengths : torch.Tensor
         Wavelengths of shape (num_wavelengths, ), or (num_wavelengths, 1).
     angles : torch.Tensor
-        Incidence angles (in radians) or (in degrees, if you convert inside).
+        Incidence angles (in degrees).
+        Shape: (num_angles,) 
+    k_x : torch.Tensor
+        Transversal component of the K-vector. Shape: (num_wavelengths, num_angles)
+    Returns
+    -------
+    M_total : torch.Tensor
+        Overall transfer matrix of shape (num_wavelengths, num_angles, 2, 2).
+    """
+    # Prepare shapes      
+    num_wavelengths = wavelengths.shape[0]
+    num_angles = angles.shape[1]
+    n_air = torch.ones((num_wavelengths, num_angles))
+
+
+    # 1) Build interface matrix: from air to layer
+    I_in = interface_matrix_s_pol(n_air, n, k_x)
+
+    # 2) Build propagation matrix for layer i
+    P_mat = propagation_matrix(n, d, k_x, wavelengths)
+
+    # 3) Build interface matrix: from air to layer
+    I_out = interface_matrix_s_pol(n, n_air, k_x)
+
+    # 4) Multiply into M_current. 
+    M_layer = torch.einsum('...ij,...jk->...ik', I_in, torch.einsum('...ij,...jk->...ik', P_mat, I_out )) 
+
+    return M_layer
+
+def single_layer_transfer_matrix_p_pol(n, d, wavelengths, angles, k_x):
+    """
+    Computes the total transfer matrix for a single layer structure surrounded by air 
+    over all wavelengths and angles in parallel (p-polarization).
+    Parameters
+    ----------
+    n : torch.Tensor
+        Refractive indices of shape (num_layers, num_wavelengths), 
+        or broadcastable to that shape. E.g. each layer has n[i, :] over wavelengths.
+    d : torch.Tensor
+        Thicknesses of shape (num_layers, ), or broadcastable to (num_layers, num_wavelengths).
+    wavelengths : torch.Tensor
+        Wavelengths of shape (num_wavelengths, ), or (num_wavelengths, 1).
+    angles : torch.Tensor
+        Incidence angles (in degrees).
+        Shape: (num_angles,) 
+    k_x : torch.Tensor
+        Transversal component of the K-vector. Shape: (num_wavelengths, num_angles)
+    Returns
+    -------
+    M_total : torch.Tensor
+        Overall transfer matrix of shape (num_wavelengths, num_angles, 2, 2).
+    """
+    # Prepare shapes      
+    num_wavelengths = wavelengths.shape[0]
+    num_angles = angles.shape[1]
+    n_air = torch.ones((num_wavelengths, num_angles))
+
+
+    # 1) Build interface matrix: from air to layer
+    I_in = interface_matrix_p_pol(n_air, n, k_x)
+
+    # 2) Build propagation matrix for layer i
+    P_mat = propagation_matrix(n, d, k_x, wavelengths)
+
+    # 3) Build interface matrix: from air to layer
+    I_out = interface_matrix_p_pol(n, n_air, k_x)
+
+    # 4) Multiply into M_current. 
+    M_layer = torch.einsum('...ij,...jk->...ik', I_in, torch.einsum('...ij,...jk->...ik', P_mat, I_out )) 
+
+    return M_layer
+
+
+def compute_structure_transfer_matrix_s_pol(n, d, wavelengths, angles, n_env):
+    """
+    Computes the total transfer matrix for a multilayer structure 
+    over all wavelengths and angles in parallel (s-polarization).
+    Parameters
+    ----------
+    n : list[torch.Tensor]
+        Refractive indices of shape (num_layers, num_wavelengths), 
+        or broadcastable to that shape. E.g. each layer has n[i, :] over wavelengths.
+    d : list[torch.Tensor]
+        Thicknesses of shape (num_layers, ), or broadcastable to (num_layers, num_wavelengths).
+    wavelengths : torch.Tensor
+        Wavelengths of shape (num_wavelengths, ), or (num_wavelengths, 1).
+    angles : torch.Tensor
+        Incidence angles (in degrees).
         Shape: (num_angles,)
-    interface_fn : function
-        Vectorized interface function, e.g. interface_matrix_s_pol
-    propagation_fn : function
-        Vectorized propagation function
-    snell_fn : function
-        Vectorized snell law function
     Returns
     -------
     M_total : torch.Tensor
         Overall transfer matrix of shape (num_wavelengths, num_angles, 2, 2).
     """
 
-    # Prepare shapes
-    num_layers = n.shape[0]           
+    # Prepare shapes       
     num_wavelengths = wavelengths.shape[0]
     num_angles = angles.shape[0]
-
-    # Convert angles to radians if needed and broadcast
-    angles_rad = torch.deg2rad(angles) if angles.max() > np.pi else angles
-    # Expand dims to shape (num_wavelengths, num_angles) for vector ops if needed
+    angles_rad = torch.deg2rad(angles) 
     angles_rad = angles_rad.unsqueeze(0).expand(num_wavelengths, num_angles)
-
-    # Track the 'current angle' in each layer 
-    theta_current = angles_rad
+    wavelengths = wavelengths.unsqueeze(1).expand(num_wavelengths, num_angles)
 
     # Initialize total transfer matrix as identity: shape (num_wavelengths, num_angles, 2, 2)
     M_current = torch.eye(2, 2, dtype=torch.complex64).repeat(num_wavelengths, num_angles, 1, 1)
 
-    for i in range(num_layers - 1):
-        # Indices in the n and d arrays
-        n_i     = n[i, :]       
-        n_next  = n[i + 1, :]   
-        d_i     = d[i] if i < len(d) else 0.0
+    # calculate x-component of K vector (conserved quantity accros layers)
+    n_air = torch.ones((num_wavelengths, num_angles))
+    n_env = n_env.unsqueeze(1).expand(num_wavelengths, num_angles)
+    angles_rad = torch.arcsin(n_env * torch.sin(angles_rad))
+    k_x = n_air * torch.sin(angles_rad)
 
-        # Expand n_i, n_next, and d_i so they can broadcast with angles
-        n_i2d    = n_i.unsqueeze(1).expand(num_wavelengths, num_angles)
-        n_next2d = n_next.unsqueeze(1).expand(num_wavelengths, num_angles)
+    for i, n_i in enumerate(n):
+        # expand n and d to be broadcastable
+        n_air = torch.ones((num_wavelengths, num_angles))
+        n_2d = n_i.unsqueeze(1).expand(num_wavelengths, num_angles)
+        d_2d= d[i].unsqueeze(0).unsqueeze(1).expand(num_wavelengths, num_angles)
 
-        # Current thickness broadcast
-        d_i_val = d_i 
-        d_i_val = d_i_val.unsqueeze(1).expand(num_wavelengths, num_angles)
-
-        # 1) Snell's law for layer i -> i+1
-        theta_next = snell_law_vectorized(n_i2d, n_next2d, theta_current)
-
-        # 2) Build interface matrix: from layer i to layer i+1
-        I_mat = interface_fn(n_i2d, n_next2d, theta_current, theta_next)
-
-        # 3) Build propagation matrix for layer i
-        P_mat = propagation_fn(n_i2d, d_i_val, 
-                               wavelengths.unsqueeze(1).expand(num_wavelengths, num_angles),
-                               theta_current)
-
-        # 4) Multiply into M_current. 
-        M_layer = torch.einsum('...ij,...jk->...ik', P_mat, I_mat )
+        #retrieve transfer matrix for each layer
+        M_layer = single_layer_transfer_matrix_s_pol(n_2d, d_2d, wavelengths, angles_rad, k_x)
 
         # 5) Update M_current
         M_current = torch.einsum('...ij,...jk->...ik', M_current, M_layer)
 
-        # Move on to next layer angle
-        theta_current = theta_next
+    return M_current, k_x
 
-    return M_current, theta_current
+def compute_structure_transfer_matrix_p_pol(n, d, wavelengths, angles, n_env):
+    """
+    Computes the total transfer matrix for a multilayer structure 
+    over all wavelengths and angles in parallel (p-polarization).
+    Parameters
+    ----------
+    n : list[torch.Tensor]
+        Refractive indices of shape (num_layers, num_wavelengths), 
+        or broadcastable to that shape. E.g. each layer has n[i, :] over wavelengths.
+    d : list[torch.Tensor]
+        Thicknesses of shape (num_layers, ), or broadcastable to (num_layers, num_wavelengths).
+    wavelengths : torch.Tensor
+        Wavelengths of shape (num_wavelengths, ), or (num_wavelengths, 1).
+    angles : torch.Tensor
+        Incidence angles (in degrees).
+        Shape: (num_angles,)
+    Returns
+    -------
+    M_total : torch.Tensor
+        Overall transfer matrix of shape (num_wavelengths, num_angles, 2, 2).
+    """
+
+    # Prepare shapes       
+    num_wavelengths = wavelengths.shape[0]
+    num_angles = angles.shape[0]
+    angles_rad = torch.deg2rad(angles) 
+    angles_rad = angles_rad.unsqueeze(0).expand(num_wavelengths, num_angles)
+    wavelengths = wavelengths.unsqueeze(1).expand(num_wavelengths, num_angles)
+
+    # Initialize total transfer matrix as identity: shape (num_wavelengths, num_angles, 2, 2)
+    M_current = torch.eye(2, 2, dtype=torch.complex64).repeat(num_wavelengths, num_angles, 1, 1)
+
+    # calculate x-component of K vector (conserved quantity accros layers)
+    n_air = torch.ones((num_wavelengths, num_angles))
+    n_env = n_env.unsqueeze(1).expand(num_wavelengths, num_angles)
+    angles_rad = torch.arcsin(n_env * torch.sin(angles_rad))
+    k_x = n_air * torch.sin(angles_rad)
+
+    for i, n_i in enumerate(n):
+        # expand n and d to be broadcastable
+        n_air = torch.ones((num_wavelengths, num_angles))
+        n_2d = n_i.unsqueeze(1).expand(num_wavelengths, num_angles)
+        d_2d= d[i].unsqueeze(0).unsqueeze(1).expand(num_wavelengths, num_angles)
+
+        #retrieve transfer matrix for each layer
+        M_layer = single_layer_transfer_matrix_p_pol(n_2d, d_2d, wavelengths, angles_rad, k_x)
+
+        # 5) Update M_current
+        M_current = torch.einsum('...ij,...jk->...ik', M_current, M_layer)
+
+    return M_current, k_x
+
+
+def adding_environment_and_substrate_s_pol(M_current, n_env, n_sub, k_x ):
+
+    n_env = n_env.unsqueeze(1).expand(M_current.shape[:2])
+    n_sub = n_sub.unsqueeze(1).expand(M_current.shape[:2])
+
+    n_air = torch.ones(M_current.shape[:2])
+    env_int = interface_matrix_s_pol(n_env, n_air, k_x)
+    sub_int = interface_matrix_s_pol(n_air, n_sub, k_x)
+
+    M_current = torch.einsum('...ij,...jk->...ik', M_current, sub_int)
+    
+    M_total = torch.einsum('...ij,...jk->...ik', env_int, M_current)
+
+    return M_total
+
+def adding_environment_and_substrate_p_pol(M_current, n_env, n_sub, k_x ):
+
+    n_env = n_env.unsqueeze(1).expand(M_current.shape[:2])
+    n_sub = n_sub.unsqueeze(1).expand(M_current.shape[:2])
+
+    n_air = torch.ones(M_current.shape[:2])
+    env_int = interface_matrix_p_pol(n_env, n_air, k_x)
+    sub_int = interface_matrix_p_pol(n_air, n_sub, k_x)
+
+    M_current = torch.einsum('...ij,...jk->...ik', M_current, sub_int)
+    
+    M_total = torch.einsum('...ij,...jk->...ik', env_int, M_current)
+
+    return M_total
