@@ -1,10 +1,12 @@
 import torch
 import numpy as np
 from utils import forward_kz
+
+from typing import List, Tuple
 # Constants
 c = 2,99792458e8  # Speed of light in vacuum (m/s)
 
-def propagation_matrix(n_i, d_i, k_x, wavelength):
+def propagation_matrix(n_i: torch.Tensor, d_i: torch.Tensor, k_x, wavelength: torch.Tensor) -> torch.Tensor:
     """
     Computes the propagation transfer matrix for through a layer,
     in parallel for all wavelengths and angles.
