@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import ipywidgets as widgets
-from IPython.display import display
+from IPython.display import display, clear_output
 
 def plot_results(wavelengths, angles, R, T):
     """
@@ -32,28 +32,6 @@ def plot_results(wavelengths, angles, R, T):
     plt.tight_layout()
     plt.show()
 
-# def interactive_plot(wavelengths, angles, R, T):
-#     """
-#     Create an interactive plot to show both the full graph and a specific angle chosen by the user.
-#     """
-#     def update_plot(angle_index):
-#         plt.figure(figsize=(10, 6))
-#         plt.plot(wavelengths * 1e9, R[:, angle_index], label=f"Reflectance (R) at {angles[angle_index]}°", linestyle='--', color='blue')
-#         plt.plot(wavelengths * 1e9, T[:, angle_index], label=f"Transmittance (T) at {angles[angle_index]}°", color='green')
-#         plt.xlabel("Wavelength (nm")
-#         plt.ylabel("Optical Response")
-#         plt.title(f"Optical Response at {angles[angle_index]}°")
-#         plt.legend()
-#         plt.grid(True)
-#         plt.show()
-    
-#     angle_slider = widgets.IntSlider(min=0, max=len(angles)-1, step=1, description="Angle Index")
-#     interactive_plot = widgets.interactive(update_plot, angle_index=angle_slider)
-#     display(interactive_plot)
-
-import matplotlib.pyplot as plt
-import ipywidgets as widgets
-from IPython.display import display, clear_output
 
 def interactive_plot(wavelengths, angles, R, T):
     out = widgets.Output()

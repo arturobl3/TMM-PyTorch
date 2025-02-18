@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from utils import forward_kz
 # Constants
 c = 2,99792458e8  # Speed of light in vacuum (m/s)
 
@@ -22,7 +23,8 @@ def propagation_matrix(n_i, d_i, k_x, wavelength):
     torch.Tensor
         Propagation matrices of shape (num_wavelengths, num_angles, 2, 2)
     """
-    k_2z = torch.sqrt(n_i**2 - k_x**2+0j)
+    # k_2z = torch.sqrt(n_i**2 - k_x**2+0j)
+    k_2z = forward_kz(n_i, k_x)
 
     # Phase shift delta_i for each wavelength & angle
     delta_i = (2 * np.pi / wavelength) * k_2z * d_i
@@ -55,11 +57,14 @@ def interface_matrix_s_pol(n_i, n_next, k_x):
     """
 
     # Wavevector components in each layer
-    k_1z = torch.sqrt(n_i**2 - k_x**2 +0j)
-    k_2z = torch.sqrt(n_next**2 - k_x**2 +0j)
+    # k_1z = torch.sqrt(n_i**2 - k_x**2 +0j)
+    k_1z = forward_kz(n_i, k_x)
+    # k_2z = torch.sqrt(n_next**2 - k_x**2 +0j)
+    k_2z = forward_kz(n_next, k_x)
+
 
     r_ij = (k_1z - k_2z) / (k_1z + k_2z)
-    t_ij = (2 * k_1z) / (k_1z + k_2z)
+    t_ij = (2 * k_1z) / (k_1z + k_2z) 
 
     # Construct the tensor for the result
     M_shape = r_ij.shape + (2, 2)  # shape is (num_wavelengths, num_angles, 2, 2)
@@ -92,11 +97,13 @@ def interface_matrix_p_pol(n_i, n_next, k_x):
         Interface matrices of shape (num_wavelengths, num_angles, 2, 2)
     """
     # Wavevector components in each layer
-    k_1z = torch.sqrt(n_i**2 - k_x**2 +0j)
-    k_2z = torch.sqrt(n_next**2 - k_x**2 +0j)
+    # k_1z = torch.sqrt(n_i**2 - k_x**2 +0j)
+    k_1z = forward_kz(n_i, k_x)
+    # k_2z = torch.sqrt(n_next**2 - k_x**2 +0j)
+    k_2z = forward_kz(n_next, k_x)
     
     r_ij = (n_next / n_i * k_1z - n_i / n_next * k_2z) / (n_next / n_i * k_1z + n_i / n_next * k_2z)
-    t_ij = (2 * k_1z) / (n_next / n_i * k_1z + n_i / n_next * k_2z)
+    t_ij = (2 * k_1z) / (n_next / n_i * k_1z + n_i / n_next * k_2z) 
 
     # Construct the tensor for the result
     M_shape = r_ij.shape + (2, 2)  # shape is (num_wavelengths, num_angles, 2, 2)
@@ -140,30 +147,21 @@ def reflectance_transmittance(M, n_incident, n_exit, theta_incident):
     """
     # Reflection and transmission coefficients from the matrix
     r = M[..., 1, 0] / M[..., 0, 0]
-    t = torch.linalg.det(M) / M[..., 0, 0]
+    t = 1 / M[..., 0, 0]
 
     # Reflectance
     R = torch.abs(r) ** 2
     k_x = n_incident * torch.sin(theta_incident)
     k_1z = n_incident * torch.cos(theta_incident)
-    k_2z = torch.sqrt(n_exit**2 - k_x**2 +0j)
+    # k_2z = torch.sqrt(n_exit**2 - k_x**2 +0j)
+    k_2z = forward_kz(n_exit, k_x)
 
     # Transmittance (for s-polarization), accounting for angle dependence
     # T = |t|^2 * ( k_2z/k_1z)
-    T = torch.abs(t) ** 2 * torch.real(k_2z / k_1z)
+    T = torch.abs(t) ** 2  * torch.real(k_2z) /torch.real(k_1z)
 
     return R, T
 
-def snell_law_vectorized(n1, n2, theta1):
-    """
-    Vectorized Snell's law:
-    n1, n2, theta1 each have shape (num_wavelengths, num_angles) or broadcastable.
-    Returns theta2 with same shape, applying arcsin(n1/n2 * sin(theta1)) in parallel.
-    """
-    sin_theta2 = (torch.real(n1) / torch.real(n2)) * torch.sin(theta1)
-    sin_theta2_clamped = torch.clamp(sin_theta2, -1.0, 1.0)
-    theta2 = torch.arcsin(sin_theta2_clamped)
-    return theta2
 
 def single_layer_transfer_matrix_s_pol(n, d, wavelengths, angles, k_x):
     """

@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from transfer_matrix import *
+from utils import snell_law_vectorized
 
 def test_interface_matrix():
     """
@@ -20,7 +21,7 @@ def test_interface_matrix():
     t = 1 / T_matrix[0, 0]
 
     R = torch.abs(r) ** 2
-    T = torch.abs(t) ** 2 * torch.real(n2 * torch.cos(theta2)) / torch.real(n1 * torch.cos(theta1))
+    T = torch.abs(t) ** 2 
 
     assert torch.allclose(R, torch.tensor(0.04), atol=1e-3), f"Failed: R = {R}"
     assert torch.allclose(T, torch.tensor(0.96), atol=1e-3), f"Failed: T = {T}"
@@ -98,7 +99,7 @@ def test_propagation_matrix():
 #     print("Multilayer structure test passed!")
 
 
-def test_1_layer_analytical(n1,n2,n3, wavelengths, theta_1, d):
+def test_1_layer_analytical_s(n1,n2,n3, wavelengths, theta_1, d):
 
     wavelengths = wavelengths.unsqueeze(1)
     theta_1 = theta_1.unsqueeze(0)
@@ -127,6 +128,40 @@ def test_1_layer_analytical(n1,n2,n3, wavelengths, theta_1, d):
             torch.real(n1 * torch.cos(theta_1)))
     
     return R,T
+
+
+def test_1_layer_analytical_p(n1,n2,n3, wavelengths, theta_1, d):
+
+    wavelengths = wavelengths.unsqueeze(1)
+    theta_1 = theta_1.unsqueeze(0)
+    theta_1 = torch.deg2rad(theta_1) 
+    theta_2 = snell_law_vectorized(n1, n2, theta_1)
+    theta_3 = snell_law_vectorized(n2, n3, theta_2)
+
+    k0 = 2*torch.pi/wavelengths
+    k1z = n1 * k0 * torch.cos(theta_1)
+    k2z = n2 * k0 *  torch.cos(theta_2)
+    k3z = n3 * k0 *  torch.cos(theta_3)
+
+    r12 = (n2/n1 * k1z - n1/n2 * k2z) / (n2/n1 * k1z + n1/n2 * k2z)
+    r23 = (n3/n2 * k2z - n2/n3 * k3z) / (n3/n2 * k2z + n2/n3 * k3z)
+    beta = k2z*d
+
+    t12 = (2 * k1z) / (n2/n1 * k1z + n1/n2 * k2z)
+    t23 = (2 * k2z) / (n3/n2 * k2z + n2/n3 *k3z)
+
+    r = (r12 + r23 * torch.exp(2j*beta)) / (1 + r12 * r23 * torch.exp(2j*beta))
+    t = (t12 * t23 * torch.exp(1j*beta)) / (1 + r12 * r23 * torch.exp(2j*beta))
+
+    R = torch.abs(r) ** 2
+    T = (torch.abs(t) ** 2 *
+            torch.real(n3 * torch.cos(theta_3)) /
+            torch.real(n1 * torch.cos(theta_1)))
+    
+    return R,T
+
+
+
 
 
 def one_layer_rt(n1, n2, n3, wavelengths, theta_1_deg, d):
