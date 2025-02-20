@@ -1,13 +1,63 @@
 """
-TMM-fjfjhfjhf
-Description: 
-Authors: 
+================================================================================
+Module: t_matrix.py
+================================================================================
+Description:
+    This module implements the T_matrix class for computing the transfer matrix in 
+    thin film optics using the Transfer Matrix Method (TMM). The T_matrix class 
+    provides methods to calculate the overall transfer matrix for a coherent layer, 
+    as well as the interface transfer matrices for both s- and p-polarizations, and 
+    the propagation matrix through an optical layer.
+
+    The transfer matrix approach is essential for simulating light propagation 
+    through multilayered media and is widely used in the design and analysis of optical 
+    thin films. The methods in this module operate in a vectorized manner using 
+    PyTorch tensors, which facilitates high-performance computations on both CPU 
+    and GPU devices.
+
+Key Components:
+    - coherent_layer: Computes the overall transfer matrix for a single coherent 
+      layer surrounded by air over all wavelengths and angles.
+    - interface_s: Computes the interface matrix between two media for s-polarization.
+    - interface_p: Computes the interface matrix between two media for p-polarization.
+    - propagation_coherent: Computes the propagation transfer matrix through a layer.
+
+Conventions:
+    - propagation from left to right
+    - refractive index defined as n_real + 1j*n_imm 
+    - wavelenghts and thicknesses defined in m 
+    - angles defined in degree in range [0, 90)
+
+Usage:
+    - for high complex refractive index or very thick layers computational errors can arise when using dtype = torch.complex64 or dtype = torch.complex32. 
+      In those cases is recommended to use dtype = torch.complex128
+
+
+Example:
+    >>> import torch
+    >>> from t_matrix import T_matrix
+    >>> tm = T_matrix(dtype=torch.complex64, device=torch.device('cpu'))
+    >>> # Define optical parameters
+    >>> n = torch.tensor([1 + 1.5j])
+    >>> d = torch.tensor([100e-9])
+    >>> wavelengths = torch.tensor([500e-9, 600e-9])
+    >>> incidence_angle = torch.tensor([0,30,60])
+    >>> nx = n * torch.sin(incidence_angle)
+    >>> T = tm.coherent_layer('s', n, d, wavelengths, nx)
+    >>> print(T)
+
+Author:
+    Daniele Veraldi, Sergey Rodionov
 Date:
+    2025-02-19
+License:
+    Open Source
+================================================================================
 """
+
 
 import torch
 import numpy as np
-
 from typing import List, Tuple
 # Constants
 c = 299792458  # Speed of light in vacuum (m/s)
