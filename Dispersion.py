@@ -56,7 +56,6 @@ class flatEpsilon(BaseDispersion):
         """
         Compute the dielectric permittivity (epsilon).
         The dielectric permittivity is calculated as the square of the refractive index.
-        
         Returns:
             torch.tensor: A 1D tensor of size `num_wavelenght` where each element is set
                           to the constant refractive index value `n`.
@@ -67,7 +66,6 @@ class flatEpsilon(BaseDispersion):
     def getEpsilon(self) -> torch.Tensor:
         """
         Generate the dielectric permittivity tensor.
-        
         Returns:
             torch.tensor: A tensor representing the dielectric permittivity across the wavelengths.
         """
@@ -76,8 +74,98 @@ class flatEpsilon(BaseDispersion):
     def updateParams(self, new_epsilon: float | complex) -> None:
         """
         Update the dielectric permittivity parameter.
-
         Args:
             new_refractiveIndex (float | complex): The new value for the constant dielectric permittivity.
         """
         self.e = new_epsilon  
+
+
+class Lorentz(BaseDispersion):  
+    """
+    Implements the Lorentz oscillator model for optical dispersion.
+    This class computes the electric permittivity and refractive index based on the Lorentz oscillator model.
+    It extends the BaseDispersion class and uses PyTorch tensors for numerical computations,
+    allowing for efficient evaluation on both CPU and GPU devices.
+    
+    Attributes:
+        dtype (torch.dtype): The data type used for tensor computations.
+        device (torch.device): The device (e.g., CPU or GPU) on which the tensors are allocated.
+        wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which the dispersion properties are evaluated.
+        coefficients (list of torch.Tensor): A list containing the Lorentz oscillator parameters:
+            - A (torch.Tensor): Oscillator amplitude.
+            - E0 (torch.Tensor): Resonance energy.
+            - C (torch.Tensor): Damping coefficient.
+    """
+    def __init__(self,
+                 A: float,
+                 E0:float,
+                 C:float,
+                 wavelength : torch.Tensor,
+                 dtype: torch.dtype,
+                 device: torch.device,
+    )-> None:
+        """
+        Initialize the Lorentz dispersion model with given parameters.
+        Args:
+            A (float): Oscillator amplitude.
+            E0 (float): Resonance energy.
+            C (float): Damping coefficient.
+            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) for dispersion evaluation.
+            dtype (torch.dtype): Data type for tensor computations.
+            device (torch.device): Device (e.g., CPU or GPU) to use for tensor computations.
+        """
+        self.dtype = dtype
+        self.device = device
+        self.wavelength = wavelength
+
+        self.coefficients = [torch.tensor(A, dtype=self.dtype, device=self.device),
+                             torch.tensor(E0, dtype=self.dtype, device=self.device),
+                             torch.tensor(C, dtype=self.dtype, device=self.device)]
+
+
+    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex refractive index at the given wavelengths
+        The refractive index is calculated as the square root of the electric permittivity:
+            n = sqrt(ε)
+
+        Args:
+            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which to compute the refractive index.
+        Returns:
+            torch.Tensor: The computed complex refractive index.
+        """
+        return torch.sqrt(self.epsilon(wavelength))
+    
+    def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex electric permittivity using the Lorentz oscillator model.
+        The electric permittivity ε is computed using the formula:
+            ε = (A * E0) / (E0^2 - E^2 - i * C * E)
+        where E is the photon energy calculated as:
+            E = (h * c / e) / (wavelength * 1e-9)  
+        Constants:
+            - h (Planck constant): 6.62607015e-34 J·s
+            - c (Speed of light): 299792458 m/s
+            - e (Elementary charge): 1.60217663e-19 C 
+        The factor of 1e-9 converts the wavelength from nanometers to meters.
+        
+        Args:
+            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which to compute the permittivity.
+        
+        Returns:
+            torch.Tensor: The computed complex electric permittivity.
+        """
+        # Constants
+        plank_constant = 6.62607015e-34
+        c_constant = 299792458
+        e_constant = 1.60217663e-19
+        
+        E = (plank_constant * c_constant / e_constant) / (wavelength * 1e-9)
+        E = torch.tensor(E, dtype=self.dtype, device = self.device)
+
+        A, E0, C = self.coefficients
+        
+        # Lorentz electric permittivity calculation
+        eps = (A * E0) / (E0**2 - E**2 - 1j * C * E)
+        
+        return eps

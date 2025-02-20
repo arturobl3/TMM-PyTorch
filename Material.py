@@ -44,16 +44,17 @@ class BaseMaterial():
         """
         Compute the overall refractive index of the material.
 
-        This method calculates the material's refractive index by summing the refractive 
-        index contributions from each dispersion model in the `dispersion` list. The summation 
+        This method calculates the material's refractive index by summing the dielectric permittivity
+        contributions from each dispersion model in the `dispersion` list, then taking the square root. The summation 
         is performed element-wise over a tensor that spans the specified number of wavelengths.
 
         Returns:
             torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 
                           refractive index at each wavelength.
         """
-        n = torch.zeros(self.num_wavelength, dtype=self.dtype, device=self.device)
+        e = torch.zeros(self.num_wavelength, dtype=self.dtype, device=self.device)
         for i, disp in enumerate(self.dispersion):
-            n += disp.getRefractiveIndex()
+            e += disp.getEpsilon()
 
+        n = torch.sqrt(e)
         return n
