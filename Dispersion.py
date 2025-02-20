@@ -123,7 +123,7 @@ class Lorentz(BaseDispersion):
                              torch.tensor(C, dtype=self.dtype, device=self.device)]
 
 
-    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def getRefractiveIndex(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex refractive index at the given wavelengths
         The refractive index is calculated as the square root of the electric permittivity:
@@ -134,38 +134,40 @@ class Lorentz(BaseDispersion):
         Returns:
             torch.Tensor: The computed complex refractive index.
         """
-        return torch.sqrt(self.epsilon(wavelength))
+        return torch.sqrt(self.getEpsilon(wavelength))
     
-    def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def getEpsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex electric permittivity using the Lorentz oscillator model.
         The electric permittivity ε is computed using the formula:
             ε = (A * E0) / (E0^2 - E^2 - i * C * E)
         where E is the photon energy calculated as:
-            E = (h * c / e) / (wavelength * 1e-9)  
+            E = (h * c / e) / (wavelength)  
         Constants:
             - h (Planck constant): 6.62607015e-34 J·s
             - c (Speed of light): 299792458 m/s
             - e (Elementary charge): 1.60217663e-19 C 
-        The factor of 1e-9 converts the wavelength from nanometers to meters.
         
         Args:
             wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which to compute the permittivity.
-        
         Returns:
             torch.Tensor: The computed complex electric permittivity.
         """
         # Constants
-        plank_constant = 6.62607015e-34
-        c_constant = 299792458
-        e_constant = 1.60217663e-19
+        plank_constant = torch.tensor(6.62607015e-34, dtype=self.dtype, device = self.device)
+        c_constant = torch.tensor(299792458, dtype=self.dtype, device = self.device)
+        e_constant = torch.tensor(1.60217663e-19, dtype=self.dtype, device = self.device)
         
-        E = (plank_constant * c_constant / e_constant) / (wavelength * 1e-9)
-        E = torch.tensor(E, dtype=self.dtype, device = self.device)
+        E = (plank_constant * c_constant / e_constant) / (wavelength)
 
         A, E0, C = self.coefficients
         
         # Lorentz electric permittivity calculation
-        eps = (A * E0) / (E0**2 - E**2 - 1j * C * E)
+        e = (A * E0) / (E0**2 - E**2 - 1j * C * E)
         
-        return eps
+        return e
+    
+    def updateParams(self, new_A: float, new_E0:float, new_C:float) -> None:
+        self.coefficients = [torch.tensor(new_A, dtype=self.dtype, device=self.device),
+                             torch.tensor(new_E0, dtype=self.dtype, device=self.device),
+                             torch.tensor(new_C, dtype=self.dtype, device=self.device)]
