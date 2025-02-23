@@ -167,7 +167,85 @@ class Lorentz(BaseDispersion):
         
         return e
     
-    def updateParams(self, new_A: float, new_E0:float, new_C:float) -> None:
-        self.coefficients = [torch.tensor(new_A, dtype=self.dtype, device=self.device),
-                             torch.tensor(new_E0, dtype=self.dtype, device=self.device),
-                             torch.tensor(new_C, dtype=self.dtype, device=self.device)]
+    def updateParams(self, new_coefficients: List[float]) -> None:
+        self.coefficients =  [torch.tensor(coeff, dtype=self.dtype, device=self.device) for coeff in new_coefficients]
+        
+
+class Cauchy(BaseDispersion):
+    """
+    Implements the Cauchy dispersion model for optical materials.
+    
+    This model expresses the complex refractive index as a function of wavelength
+    using the Cauchy equations for both the real and imaginary parts. The model
+    uses six coefficients which are scaled appropriately in the formulas.
+    
+    Attributes:
+        dtype (torch.dtype): Data type for tensor computations.
+        device (torch.device): Device (e.g., CPU or GPU) on which computations are performed.
+        wavelength (torch.Tensor): Tensor of wavelengths at which the dispersion is evaluated.
+        coefficients (List[torch.Tensor]): List of six coefficients [A, B, C, D, E, F] converted to tensors.
+    """
+
+    def __init__(self,
+                 coefficients: List[float],
+                 wavelength: torch.Tensor,
+                 dtype: torch.dtype,
+                 device: torch.device) -> None:
+        """
+        Initialize the Cauchy dispersion model with specified coefficients and parameters.
+        
+        Args:
+            coefficients (List[float]): A list of six floats representing the Cauchy coefficients:
+                A, B, C for the real part and D, E, F for the imaginary part.
+            wavelength (torch.Tensor): Tensor of wavelengths at which to evaluate the model.
+            dtype (torch.dtype): Data type to be used for all tensor operations.
+            device (torch.device): Device on which tensor operations will be executed.
+        """
+        self.dtype = dtype
+        self.device = device
+        self.wavelength = wavelength
+        # Convert each coefficient to a torch tensor with the specified dtype and device.
+        self.coefficients = [torch.tensor(coeff, dtype=self.dtype, device=self.device) for coeff in coefficients]
+
+    def getRefractiveIndex(self, wavelength: torch.Tensor) -> torch.Tensor:
+        """
+        Calculate the complex refractive index at the given wavelengths using the Cauchy model.
+        The real part n and the imaginary part k are computed as:
+            n = A + (1e4 * B) / wavelength² + (1e9 * C) / wavelength⁴
+            k = D + (1e4 * E) / wavelength² + (1e9 * F) / wavelength⁴
+        The complex refractive index is then n + 1j*k.
+
+        Args:
+            wavelength (torch.Tensor): Tensor of wavelengths at which to compute the refractive index.
+        Returns:
+            torch.Tensor: Complex refractive index evaluated at the specified wavelengths.
+        """
+        A, B, C, D, E, F = self.coefficients
+        n = A + 1e4 * B / wavelength**2 + 1e9 * C / wavelength**4
+        k = D + 1e4 * E / wavelength**2 + 1e9 * F / wavelength**4
+        return n + 1j * k
+
+    def getEpsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex electric permittivity (dielectric constant) at the specified wavelengths.
+        The permittivity is obtained by squaring the complex refractive index
+        
+        Args:
+            wavelength (torch.Tensor): Tensor of wavelengths at which to compute the permittivity.
+        Returns:
+            torch.Tensor: The complex electric permittivity evaluated at the specified wavelengths.
+        """
+        # Here, self.refractive_index is assumed to be defined in BaseDispersion or elsewhere.
+        # If not, consider replacing it with self.getRefractiveIndex.
+        return (self.getRefractiveIndex(wavelength))**2
+
+    def updateParams(self, new_coefficients: List[float]) -> None:
+        """
+        Update the Cauchy coefficients for the dispersion model.
+        This method replaces the current coefficients with a new set provided as a list of floats.
+        Each new coefficient is converted to a torch tensor with the appropriate dtype and device.
+        
+        Args:
+            new_coefficients (List[float]): A list of six new coefficient values to update the model.
+        """
+        self.coefficients = [torch.tensor(coeff, dtype=self.dtype, device=self.device) for coeff in new_coefficients]
