@@ -5,15 +5,12 @@ Module: t_matrix.py
 Description:
     This module implements the T_matrix class for computing the transfer matrix in 
     thin film optics using the Transfer Matrix Method (TMM). The T_matrix class 
-    provides methods to calculate the overall transfer matrix for a coherent layer, 
-    as well as the interface transfer matrices for both s- and p-polarizations, and 
-    the propagation matrix through an optical layer.
+    provides methods to calculate the transfer matrix for a coherent layer, incoherent layer, 
+    and interfaces as well as for propagation inside a layer. 
 
-    The transfer matrix approach is essential for simulating light propagation 
-    through multilayered media and is widely used in the design and analysis of optical 
-    thin films. The methods in this module operate in a vectorized manner using 
+    The methods in this module operate in a vectorized manner using 
     PyTorch tensors, which facilitates high-performance computations on both CPU 
-    and GPU devices.
+    and GPU devices and compatible with automatic differentiation (autograd). 
 
 Key Components:
     - coherent_layer: Computes the overall transfer matrix for a single coherent 
@@ -25,7 +22,7 @@ Key Components:
 Conventions:
     - propagation from left to right
     - refractive index defined as n_real + 1j*n_imm 
-    - wavelenghts and thicknesses defined in m 
+    - wavelenghts and thicknesses must be in the same units [m, or nm, or um]
     - angles defined in degree in range [0, 90)
 
 Usage:
@@ -47,11 +44,11 @@ Example:
     >>> print(T)
 
 Author:
-    Daniele Veraldi, Sergey Rodionov
+    Daniele Veraldi, Sergei Rodionov
 Date:
     2025-02-19
 License:
-    Open Source
+    MIT, Open Source
 ================================================================================
 """
 
