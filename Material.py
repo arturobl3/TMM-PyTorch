@@ -1,6 +1,6 @@
 import torch
 from typing import List
-from Dispersion import BaseDispersion
+from dispersion import BaseDispersion
 
 class BaseMaterial():
     """
@@ -16,45 +16,57 @@ class BaseMaterial():
             must implement a `getRefractiveIndex()` method.
         dtype (torch.dtype): The data type for the PyTorch tensors.
         device (torch.device): The device (e.g., CPU or GPU) where the tensors are allocated.
-        num_wavelength (int): The number of wavelength points used in simulations, 
-            determined by the first dispersion model in the list.
     """
 
     def __init__(self,
                  dispersion: List[BaseDispersion],
-                 num_wavelength: int,
-                 dtype: torch.dtype,
-                 device: torch.device,
+                 dtype: torch.dtype = torch.float,
+                 device: torch.device = torch.device('cpu'),
     ) -> None:
         """
         Initialize a BaseMaterial instance.
 
         Args:
             dispersion (List[Dispersion]): A list of dispersion model instances.
-            num_wavelenght (int): The number of wavelength points.
             dtype (torch.dtype): The desired data type for tensor operations.
             device (torch.device): The device on which the tensors will be allocated.
         """
         self.dispersion = dispersion
         self.dtype = dtype
         self.device = device
-        self.num_wavelength = num_wavelength
 
-    def refractive_index(self) -> torch.Tensor:
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
         Compute the overall refractive index of the material.
 
-        This method calculates the material's refractive index by summing the dielectric permittivity
-        contributions from each dispersion model in the `dispersion` list, then taking the square root. The summation 
-        is performed element-wise over a tensor that spans the specified number of wavelengths.
+        This method calculates the material's refractive index.
+
+        Parameters:
+            wavelengths: torch.Tensor.
 
         Returns:
             torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 
                           refractive index at each wavelength.
         """
-        e = torch.zeros(self.num_wavelength, dtype=self.dtype, device=self.device)
-        for i, disp in enumerate(self.dispersion):
-            e += disp.getEpsilon()
-
-        n = torch.sqrt(e)
+        epsilon = self.epsilon(wavelengths)
+        n = torch.sqrt(epsilon)
         return n
+    
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the overall epsilon of the material.
+
+        This method calculates the material's epsilon by summing the dielectric permittivity
+        contributions from each dispersion model in the `dispersion` list. The summation 
+        is performed element-wise over a tensor that spans the specified number of wavelengths.
+
+        Parameters:
+            wavelengths: torch.Tensor. 
+
+        Returns:
+            torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 
+                          refractive index at each wavelength.
+        """
+        epsilons_list =[disp.epsilon(wavelengths) for disp in self.dispersion]
+        epsilon = torch.stack(epsilons_list, dim=0).sum(dim=0)
+        return epsilon
