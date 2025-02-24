@@ -4,7 +4,7 @@ from material import BaseMaterial
 import torch 
 
 # Define a literal type for layer classification.
-LayerType = Literal["coherent", "substrate", "environment"]
+LayerType = Literal["coh", "subs", "env"]
 
 class BaseLayer:
     """
@@ -19,9 +19,9 @@ class BaseLayer:
         thickness (torch.Tensor): The physical thickness of the layer.
         type (LayerType): A literal string indicating the layer type, which
             can be one of the following:
-                - "coherent": Layers that exhibit coherent interference effects.
-                - "substrate": Layers that serve as a substrate in the structure.
-                - "environment": Layers representing the surrounding environment.
+                - "coh": Layers that exhibit coherent interference effects.
+                - "subs": Layers that serve as a substrate in the structure.
+                - "env": Layers representing the surrounding environment.
     """
 
     def __init__(self,
