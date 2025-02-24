@@ -14,6 +14,7 @@ class BaseMaterial():
     Attributes:
         dispersion (List[Dispersion]): A list of dispersion model instances. Each instance
             must implement a `getRefractiveIndex()` method.
+        name (str): the name of the implemented material
         dtype (torch.dtype): The data type for the PyTorch tensors.
         device (torch.device): The device (e.g., CPU or GPU) where the tensors are allocated.
     """
@@ -29,6 +30,7 @@ class BaseMaterial():
 
         Args:
             dispersion (List[Dispersion]): A list of dispersion model instances.
+            name (str): The name of the material implemented
             dtype (torch.dtype): The desired data type for tensor operations.
             device (torch.device): The device on which the tensors will be allocated.
         """
@@ -75,13 +77,10 @@ class BaseMaterial():
     
     def __repr__(self) -> str:
         """
-        Return a string representation of the Model instance.
-
-        The representation includes the types of the environment and substrate layers,
-        the number of layers in the structure, and the data type and device used for computations.
+        Return a string representation of the Material instance.
 
         Returns:
-            str: A string summarizing the Model.
+            str: A string summarizing the Layer.
         """
 
         dispersion_repr = f"[{', '.join(repr(dispersion) for dispersion in self.dispersion)}]"

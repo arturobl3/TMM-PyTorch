@@ -48,5 +48,11 @@ class BaseLayer:
 
 
     def __repr__(self) -> str:
+        """
+        Return a string representation of the layer instance.
+
+        Returns:
+            str: A string summarizing the Layer.
+        """
         
         return (f"Layer(Material:{self.material.name}, thickness: {self.thickness.real}, type: {self.type})")
