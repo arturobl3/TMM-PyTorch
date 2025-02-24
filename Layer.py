@@ -45,3 +45,8 @@ class BaseLayer:
         self.material = material
         self.thickness = thickness
         self.type = LayerType
+
+
+    def __repr__(self) -> str:
+        
+        return (f"Layer(Material:{self.material.name}, thickness: {self.thickness.real}, type: {self.type})")

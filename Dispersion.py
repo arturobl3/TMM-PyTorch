@@ -63,7 +63,10 @@ class Constant_epsilon(BaseDispersion):
         """
         return self.epsilon_const * torch.ones_like(wavelengths, dtype=self.dtype, device= self.device)
     
-      
+    def __repr__(self) -> str:
+        
+        return (f"Constant Dispersion(epsilon:{self.epsilon_const}, dtype: {self.dtype}, device: {self.device})")
+
 
 
 class Lorentz(BaseDispersion):  
@@ -147,6 +150,11 @@ class Lorentz(BaseDispersion):
         epsilon = (A * E0) / (E0**2 - E**2 - 1j * C * E)
         
         return epsilon  
+    
+    def __repr__(self) -> str:
+        
+        return (f"Lorentz Dispersion(coefficients (A,E0,C):{self.coefficients}, dtype: {self.dtype}, device: {self.device})")
+
 
 class Cauchy(BaseDispersion):
     """
@@ -214,3 +222,8 @@ class Cauchy(BaseDispersion):
         # Here, self.refractive_index is assumed to be defined in BaseDispersion or elsewhere.
         # If not, consider replacing it with self.getRefractiveIndex.
         return (self.refractive_index(wavelength))**2
+    
+    def __repr__(self) -> str:
+        
+        return (f"Cauchy Dispersion(Coefficients(A,B,C,D,E,F):{self.coefficients}, dtype: {self.dtype}, device: {self.device})")
+

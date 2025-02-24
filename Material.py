@@ -20,6 +20,7 @@ class BaseMaterial():
 
     def __init__(self,
                  dispersion: List[BaseDispersion],
+                 name : str | None=None,
                  dtype: torch.dtype = torch.float,
                  device: torch.device = torch.device('cpu'),
     ) -> None:
@@ -34,6 +35,7 @@ class BaseMaterial():
         self.dispersion = dispersion
         self.dtype = dtype
         self.device = device
+        self.name = name
 
     def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
@@ -70,3 +72,21 @@ class BaseMaterial():
         epsilons_list =[disp.epsilon(wavelengths) for disp in self.dispersion]
         epsilon = torch.stack(epsilons_list, dim=0).sum(dim=0)
         return epsilon
+    
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the Model instance.
+
+        The representation includes the types of the environment and substrate layers,
+        the number of layers in the structure, and the data type and device used for computations.
+
+        Returns:
+            str: A string summarizing the Model.
+        """
+
+        dispersion_repr = f"[{', '.join(repr(dispersion) for dispersion in self.dispersion)}]"
+        return (f"Material(\n"
+                f"  Name: {self.name},\n"
+                f"  Dispersions: {dispersion_repr} (n={len(self.dispersion)} dispersions),\n"
+                f"  Dtype: {self.dtype}, Device: {self.device}\n"
+                f")")
