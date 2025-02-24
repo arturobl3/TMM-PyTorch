@@ -1,6 +1,6 @@
 from typing import List, Tuple, Literal, Dict
 from collections import defaultdict
-from Material import BaseMaterial
+from material import BaseMaterial
 import torch 
 
 # Define a literal type for layer classification.
@@ -45,50 +45,3 @@ class BaseLayer:
         self.material = material
         self.thickness = thickness
         self.type = LayerType
-
-
-
-
-
-class LayerStructure:
-    def __init__(self):
-        # This list maintains the global insertion order of all layers.
-        self._layers: List[BaseLayer] = []
-        # This dictionary maps each layer type to a list of layer references.
-        self._layers_by_type: Dict[LayerType, List[BaseLayer]] = defaultdict(list)
-
-    def add_layer(self, layer: BaseLayer) -> None:
-        """
-        Adds a layer to the collection.
-        Assumes each layer has an attribute 'layer_type' (e.g., "material", "substrate").
-        """
-        self._layers.append(layer)
-        self._layers_by_type[layer.layer_type].append(layer)
-
-    def get_layers(self) -> List[BaseLayer]:
-        """
-        Returns all layers in their insertion order.
-        """
-        return self._layers
-
-    def get_layers_by_type(self, layer_type: BaseLayer) -> List[BaseLayer]:
-        """
-        Returns a list of layers that match the specified type.
-        """
-        return self._layers_by_type.get(layer_type, [])
-
-    def remove_layers_by_type(self, layer_type: BaseLayer) -> None:
-        """
-        Removes all layers of a given type.
-        This operation updates both the ordered list and the dictionary.
-        """
-        # Filter the main list to remove layers of the given type.
-        self._layers = [layer for layer in self._layers if layer.layer_type != layer_type]
-        # Remove the entry from the dictionary.
-        if layer_type in self._layers_by_type:
-            del self._layers_by_type[layer_type]
-
-    def __repr__(self) -> str:
-        return f"OrderedLayerCollection(layers={self._layers})"
-
-
