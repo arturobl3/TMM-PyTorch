@@ -83,12 +83,11 @@ class Lorentz(BaseDispersion):
             - C (torch.Tensor): Damping coefficient.
     """
     def __init__(self,
-                 A: float,
-                 E0:float,
-                 C:float,
-                 wavelength : torch.Tensor,
-                 dtype: torch.dtype,
-                 device: torch.device,
+                 A: torch.nn.Parameter,
+                 E0:torch.nn.Parameter,
+                 C:torch.nn.Parameter,
+                 dtype: torch.dtype = torch.float,
+                 device: torch.device = torch.device('cpu'),
     )-> None:
         """
         Initialize the Lorentz dispersion model with given parameters.
@@ -102,14 +101,10 @@ class Lorentz(BaseDispersion):
         """
         self.dtype = dtype
         self.device = device
-        self.wavelength = wavelength
-
-        self.coefficients = [torch.tensor(A, dtype=self.dtype, device=self.device),
-                             torch.tensor(E0, dtype=self.dtype, device=self.device),
-                             torch.tensor(C, dtype=self.dtype, device=self.device)]
+        self.coefficients = [A, E0, C]
 
 
-    def getRefractiveIndex(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex refractive index at the given wavelengths
         The refractive index is calculated as the square root of the electric permittivity:
@@ -120,9 +115,9 @@ class Lorentz(BaseDispersion):
         Returns:
             torch.Tensor: The computed complex refractive index.
         """
-        return torch.sqrt(self.getEpsilon(wavelength))
+        return torch.sqrt(self.epsilon(wavelength))
     
-    def getEpsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex electric permittivity using the Lorentz oscillator model.
         The electric permittivity ε is computed using the formula:
@@ -149,13 +144,9 @@ class Lorentz(BaseDispersion):
         A, E0, C = self.coefficients
         
         # Lorentz electric permittivity calculation
-        e = (A * E0) / (E0**2 - E**2 - 1j * C * E)
+        epsilon = (A * E0) / (E0**2 - E**2 - 1j * C * E)
         
-        return e
-    
-    def updateParams(self, new_coefficients: List[float]) -> None:
-        self.coefficients =  [torch.tensor(coeff, dtype=self.dtype, device=self.device) for coeff in new_coefficients]
-        
+        return epsilon  
 
 class Cauchy(BaseDispersion):
     """
@@ -173,10 +164,10 @@ class Cauchy(BaseDispersion):
     """
 
     def __init__(self,
-                 coefficients: List[float],
-                 wavelength: torch.Tensor,
-                 dtype: torch.dtype,
-                 device: torch.device) -> None:
+                 coefficients: List[torch.nn.Parameter],
+                 dtype: torch.dtype = torch.float,
+                 device: torch.device = torch.device('cpu'),
+        ) -> None:
         """
         Initialize the Cauchy dispersion model with specified coefficients and parameters.
         
@@ -189,11 +180,10 @@ class Cauchy(BaseDispersion):
         """
         self.dtype = dtype
         self.device = device
-        self.wavelength = wavelength
         # Convert each coefficient to a torch tensor with the specified dtype and device.
-        self.coefficients = [torch.tensor(coeff, dtype=self.dtype, device=self.device) for coeff in coefficients]
+        self.coefficients = coefficients
 
-    def getRefractiveIndex(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
         Calculate the complex refractive index at the given wavelengths using the Cauchy model.
         The real part n and the imaginary part k are computed as:
@@ -211,7 +201,7 @@ class Cauchy(BaseDispersion):
         k = D + 1e4 * E / wavelength**2 + 1e9 * F / wavelength**4
         return n + 1j * k
 
-    def getEpsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex electric permittivity (dielectric constant) at the specified wavelengths.
         The permittivity is obtained by squaring the complex refractive index
@@ -223,15 +213,4 @@ class Cauchy(BaseDispersion):
         """
         # Here, self.refractive_index is assumed to be defined in BaseDispersion or elsewhere.
         # If not, consider replacing it with self.getRefractiveIndex.
-        return (self.getRefractiveIndex(wavelength))**2
-
-    def updateParams(self, new_coefficients: List[float]) -> None:
-        """
-        Update the Cauchy coefficients for the dispersion model.
-        This method replaces the current coefficients with a new set provided as a list of floats.
-        Each new coefficient is converted to a torch tensor with the appropriate dtype and device.
-        
-        Args:
-            new_coefficients (List[float]): A list of six new coefficient values to update the model.
-        """
-        self.coefficients = [torch.tensor(coeff, dtype=self.dtype, device=self.device) for coeff in new_coefficients]
+        return (self.refractive_index(wavelength))**2
