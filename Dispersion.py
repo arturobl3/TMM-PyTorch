@@ -25,7 +25,7 @@ class Constant_epsilon(BaseDispersion):
     constant across all wavelengths. It inherits from the Dispersion base class.
 
     Attributes:
-        epsilon_const (float | complex): The constant dielectric permittivity value.
+        epsilon_const (torch.nn.Parameter): The constant dielectric permittivity value.
         dtype (torch.dtype): The data type for the torch tensor (e.g., torch.float32).
         device (torch.device): The device on which to allocate tensors (e.g., CPU or GPU).
     """
@@ -39,7 +39,7 @@ class Constant_epsilon(BaseDispersion):
         Initialize the flatRefractiveIndex instance.
 
         Args:
-            epsilon_const (float | complex): The constant dielectric permittivity value.
+            epsilon_const (torch.nn.Parameter): The constant dielectric permittivity value.
             dtype (torch.dtype): The desired data type for the output tensors.
             device (torch.device): The device on which the tensors should be allocated.
         """
@@ -91,9 +91,9 @@ class Lorentz(BaseDispersion):
         device (torch.device): The device (e.g., CPU or GPU) on which the tensors are allocated.
         wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which the dispersion properties are evaluated.
         coefficients (list of torch.Tensor): A list containing the Lorentz oscillator parameters:
-            - A (torch.Tensor): Oscillator amplitude.
-            - E0 (torch.Tensor): Resonance energy.
-            - C (torch.Tensor): Damping coefficient.
+            - A (torch.nn.Parameter): Oscillator amplitude.
+            - E0 (torch.nn.Parameter): Resonance energy.
+            - C (torch.nn.Parameter): Damping coefficient.
     """
     def __init__(self,
                  A: torch.nn.Parameter,
@@ -105,16 +105,17 @@ class Lorentz(BaseDispersion):
         """
         Initialize the Lorentz dispersion model with given parameters.
         Args:
-            A (float): Oscillator amplitude.
-            E0 (float): Resonance energy.
-            C (float): Damping coefficient.
-            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) for dispersion evaluation.
+            A (torch.nn.Parameter): Oscillator amplitude.
+            E0 (torch.nn.Parameter): Resonance energy.
+            C (torch.nn.Parameter): Damping coefficient.
             dtype (torch.dtype): Data type for tensor computations.
             device (torch.device): Device (e.g., CPU or GPU) to use for tensor computations.
         """
         self.dtype = dtype
         self.device = device
-        self.coefficients = [A, E0, C]
+        self.A = A
+        self.E0 = E0
+        self.C = C
 
 
     def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
@@ -153,11 +154,9 @@ class Lorentz(BaseDispersion):
         e_constant = torch.tensor(1.60217663e-19, dtype=self.dtype, device = self.device)
         
         E = (plank_constant * c_constant / e_constant) / (wavelength)
-
-        A, E0, C = self.coefficients
         
         # Lorentz electric permittivity calculation
-        epsilon = (A * E0) / (E0**2 - E**2 - 1j * C * E)
+        epsilon = (self.A * self.E0) / (self.E0**2 - E**2 - 1j * self.C * E)
         
         return epsilon  
     
