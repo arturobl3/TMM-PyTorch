@@ -175,6 +175,74 @@ def Cauchy_dispersion_test(coefficients:List[torch.nn.Parameter],
         return f"The Cauchy dispersion test is:' {'passed' if condition else 'failed'} in {end - start} seconds, MSE_internal: {MSE_internal}, MSE_analytical: {MSE_analytical}"
 
 
+def Cauchy_dispersion_test(coefficients:List[torch.nn.Parameter],
+                            wavelengths: torch.Tensor,
+                            dtype: torch.dtype,
+                            device: torch.device,
+                            verbose: bool = False) -> str:
+    """
+    Tests the cauchy dispersion model by verifying that n^2(λ) matches ε(λ) 
+    to within a specified tolerance (MSE < 1e-8).
+    
+    Parameters
+    ----------
+    coefficients: List[float]
+        A list of six floats representing the Cauchy coefficients:
+                A, B, C for the real part and D, E, F for the imaginary part.
+    wavelengths : torch.Tensor
+        1D tensor of wavelengths (in m) at which to evaluate the model.
+    dtype : torch.dtype
+        PyTorch data type (e.g., torch.float32 or torch.complex64).
+    device : torch.device
+        PyTorch device (e.g., 'cpu' or 'cuda').
+    verbose : bool, optional
+        If True, return a boolean pass/fail. If False, return a descriptive string.
+
+    Returns
+    -------
+    str or bool
+        If verbose is False, returns a string indicating pass/fail status, elapsed time,
+        and MSE. If verbose is True, returns a boolean indicating pass/fail.
+    """
+    # Basic sanity check
+    assert wavelengths.ndim == 1, "Wavelengths must be a 1D tensor."
+    assert len(coefficients) == 6, "Cauchy formula require 6 coefficients."
+
+    start = time.time()
+
+    # Dispersion method
+    cauchy = Cauchy(coefficients, dtype, device)
+
+    # Compute epsilon and refractive index over the wavelength range
+    eps = cauchy.epsilon(wavelengths)             
+    refractive_index  = cauchy.refractive_index(wavelengths)    
+    end = time.time()
+
+    #analytical method
+    
+    A, B, C, D, E, F = coefficients
+
+    n = A + 1e4 * B / wavelengths**2 + 1e9 * C / wavelengths**4
+    k = D + 1e4 * E / wavelengths**2 + 1e9 * F / wavelengths**4
+
+    n_analytical = n + 1j * k
+
+    # Evaluate internal consistency: n^2 ~ eps
+    MSE_internal = torch.mean(torch.abs(refractive_index**2 - eps)**2)
+
+    MSE_analytical = torch.mean(torch.abs(refractive_index - n_analytical)**2)
+
+
+    # Define pass/fail condition
+    condition = MSE_internal < 1e-8 and MSE_analytical < 1e-8
+
+    if verbose:
+        return True if condition else False
+    else:
+        return f"The Cauchy dispersion test is:' {'passed' if condition else 'failed'} in {end - start} seconds, MSE_internal: {MSE_internal}, MSE_analytical: {MSE_analytical}"
+
+
+
 
 
 
