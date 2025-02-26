@@ -1,6 +1,6 @@
 import torch
 from typing import List
-from dispersion import BaseDispersion
+from .dispersion import BaseDispersion
 
 class BaseMaterial():
     """

@@ -1,7 +1,7 @@
 from typing import List, Tuple, Literal
-from layer import BaseLayer, LayerType
-from t_matrix import T_matrix
-from optical_calculator import OpticalCalculator
+from .layer import BaseLayer, LayerType
+from .t_matrix import T_matrix
+from .optical_calculator import OpticalCalculator
 import torch 
 
 class Model:

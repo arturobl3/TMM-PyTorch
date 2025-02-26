@@ -1,5 +1,5 @@
 from typing import List, Tuple, Literal
-from t_matrix import T_matrix
+from .t_matrix import T_matrix
 import torch 
 
 class OpticalCalculator:

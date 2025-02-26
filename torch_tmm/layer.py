@@ -1,6 +1,6 @@
 from typing import List, Tuple, Literal, Dict
 from collections import defaultdict
-from material import BaseMaterial
+from .material import BaseMaterial
 import torch 
 
 # Define a literal type for layer classification.
