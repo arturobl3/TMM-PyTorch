@@ -1,8 +1,8 @@
 from typing import List, Tuple, Literal
-from T_matrix import T_matrix
+from t_matrix import T_matrix
 import torch 
 
-class OpticalProperties:
+class OpticalCalculator:
     """
     Encapsulates the computed optical properties of a multilayer optical system.
 
@@ -41,28 +41,30 @@ class OpticalProperties:
         self.n_subs = n_subs
         self.nx = nx
         
-    def reflection(self):
+    def reflection(self, pol:str):
         """
-        Calculate the reflectance for s- and p-polarizations.
+        Calculate the reflectance for s- or p-polarizations.
 
         The reflection coefficient for each polarization is computed from the corresponding
         transfer matrix T using:
             r = T[1, 0] / T[0, 0]
         The reflectance is then obtained by taking the squared magnitude of the reflection coefficient.
-
+        Args:
+            pol(str): the polarization for which to calculate the reflactance
         Returns:
-            tuple(torch.Tensor, torch.Tensor): A tuple containing:
-                - Reflectance for s-polarization.
-                - Reflectance for p-polarization.
+            tuple(torch.Tensor, torch.Tensor): The reflectance for the desired polarization
         """
-      
-        r_s = self.Tm_s[:, :, 1, 0]/self.Tm_s[:, :, 0, 0]
-        r_p = self.Tm_p[:, :, 1, 0]/self.Tm_p[:, :, 0, 0]
 
-        return torch.abs(r_s)**2, torch.abs(r_p)**2
+        if pol == 's':
+            r = self.Tm_s[:, :, 1, 0]/self.Tm_s[:, :, 0, 0]
+        elif pol == 'p':
+            r = self.Tm_p[:, :, 1, 0]/self.Tm_p[:, :, 0, 0]
+        else:
+            assert False, 'Polarization must be either s or p'
+        return torch.abs(r)**2
         
 
-    def transmission(self):
+    def transmission(self, pol:str):
         """
         Calculate the transmittance for s- and p-polarizations.
 
@@ -74,22 +76,23 @@ class OpticalProperties:
         and the transmittance is given by:
             T = |t|^2 * Re(n2z / n1z)
 
+        Args:
+            pol(str): the polarization for which to calculate the transmittance
         Returns:
-            tuple(torch.Tensor, torch.Tensor): A tuple containing:
-                - Transmittance for s-polarization.
-                - Transmittance for p-polarization.
+            tuple(torch.Tensor, torch.Tensor): The transmittance for the desired polarization
         """
 
         n1z = torch.sqrt(self.n_env[:,None]**2 - self.nx**2)
         n2z = torch.sqrt(self.n_subs[:,None]**2 - self.nx**2)
 
-        t_s = 1/self.Tm_s[:, :, 0, 0] 
-        t_p = 1/self.Tm_p[:, :, 0, 0] 
+        if pol == 's':
+            t = 1/self.Tm_s[:, :, 0, 0] 
+        elif pol == 'p':
+            t = 1/self.Tm_p[:, :, 0, 0] 
+        else:
+            assert False, 'Polarization must be either s or p'
 
-        T_s = torch.abs(t_s)**2 * torch.real(n2z/n1z)
-        T_p = torch.abs(t_p)**2 * torch.real(n2z/n1z)
-
-        return T_s, T_p
+        return torch.abs(t)**2 * torch.real(n2z/n1z)
 
 
     
