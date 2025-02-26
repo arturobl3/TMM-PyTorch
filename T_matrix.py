@@ -171,10 +171,10 @@ class T_matrix:
         T = torch.zeros(niz.shape + (2, 2), dtype=self.dtype, device=self.device)
         coeff = (ni**2/nf**2)[:, None]
         # Compute T matrix
-        T[..., 0, 0] = 0.5*(1 + coeff*nfz / niz)
-        T[..., 0, 1] = 0.5*(1 - coeff*nfz / niz)
-        T[..., 1, 0] = 0.5*(1 - coeff*nfz / niz)
-        T[..., 1, 1] = 0.5*(1 + coeff*nfz / niz)
+        T[..., 0, 0] = 0.5*(1 + coeff*nfz / niz)/torch.sqrt(coeff)
+        T[..., 0, 1] = 0.5*(1 - coeff*nfz / niz)/torch.sqrt(coeff)
+        T[..., 1, 0] = 0.5*(1 - coeff*nfz / niz)/torch.sqrt(coeff)
+        T[..., 1, 1] = 0.5*(1 + coeff*nfz / niz)/torch.sqrt(coeff)
 
         return T
     
