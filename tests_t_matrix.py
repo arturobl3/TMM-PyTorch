@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import time
-from T_matrix import T_matrix
+from t_matrix import T_matrix
 
 def single_layer_test(wavelengths: torch.Tensor,
                         angles: torch.Tensor, 
@@ -90,8 +90,8 @@ def single_layer_test(wavelengths: torch.Tensor,
     else:
         r12 = (n[:,None]**2*n1z - n_env[:,None]**2*n2z)/(n[:,None]**2*n1z + n_env[:,None]**2*n2z)
         r23 = (n_subs[:,None]**2*n2z - n[:,None]**2*n3z)/(n_subs[:,None]**2*n2z + n[:,None]**2*n3z)
-        t12 = 2*n[:,None]**2*n1z/(n[:,None]**2*n1z + n_env[:,None]**2*n2z)
-        t23 = 2*n_subs[:,None]**2*n2z/(n_subs[:,None]**2*n2z + n[:,None]**2*n3z)
+        t12 = 2*n_env[:,None]*n[:,None]*n1z/(n[:,None]**2*n1z + n_env[:,None]**2*n2z)
+        t23 = 2*n[:,None]*n_subs[:,None]*n2z/(n_subs[:,None]**2*n2z + n[:,None]**2*n3z)
 
     r_analytical = (r12 + r23*torch.exp(2j*beta))/(1 + r12*r23*torch.exp(2j*beta))
     t_analytical = t12*t23*torch.exp(1j*beta)/(1 + r12*r23*torch.exp(2j*beta))
@@ -322,7 +322,7 @@ def interface_test(angles: torch.Tensor,
         t_analytical = 2*niz/(niz + nfz)
     else:
         r_analytical = (nf[:,None]**2*niz - ni[:,None]**2*nfz)/(nf[:,None]**2*niz + ni[:,None]**2*nfz)
-        t_analytical = 2*nf[:,None]**2*niz/(nf[:,None]**2*niz + ni[:,None]**2*nfz)
+        t_analytical = 2*ni[:,None]*nf[:,None]*niz/(nf[:,None]**2*niz + ni[:,None]**2*nfz)
 
     MSE_r = torch.mean(torch.abs(r - r_analytical)**2)
     MSE_t = torch.mean(torch.abs(t - t_analytical)**2)
@@ -340,10 +340,18 @@ if __name__ == '__main__':
     angles = torch.linspace(0, 89, 90)*np.pi/180
 
     n_env = 1*torch.ones_like(wavelengths).to(torch.complex64)
-    n_subs = (2.5 + 0j)*torch.ones_like(wavelengths).to(torch.complex64)
+    n_subs = (2.5 + 0.5j)*torch.ones_like(wavelengths).to(torch.complex64)
 
     n_layer = (10 + 0.2j)*torch.ones_like(wavelengths).to(torch.complex64)
     d_layer = torch.tensor(30)
 
     print(prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                    dtype=torch.complex128, device=torch.device('cpu')))
+    
+
+    print(single_layer_test(wavelengths, angles, pol='p', n=n_layer, d=d_layer,n_env=n_env, n_subs=n_subs,
+                    dtype=torch.complex128, device=torch.device('cpu')))
+
+
+    print(interface_test(angles, n_layer, n_subs, n_env, pol='p',
                     dtype=torch.complex128, device=torch.device('cpu')))
