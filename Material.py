@@ -21,7 +21,7 @@ class BaseMaterial():
 
     def __init__(self,
                  dispersion: List[BaseDispersion],
-                 name : str | None=None,
+                 name : str = None,
                  dtype: torch.dtype = torch.float,
                  device: torch.device = torch.device('cpu'),
     ) -> None:

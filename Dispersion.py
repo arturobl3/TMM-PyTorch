@@ -90,10 +90,9 @@ class Lorentz(BaseDispersion):
         dtype (torch.dtype): The data type used for tensor computations.
         device (torch.device): The device (e.g., CPU or GPU) on which the tensors are allocated.
         wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which the dispersion properties are evaluated.
-        coefficients (list of torch.Tensor): A list containing the Lorentz oscillator parameters:
-            - A (torch.nn.Parameter): Oscillator amplitude.
-            - E0 (torch.nn.Parameter): Resonance energy.
-            - C (torch.nn.Parameter): Damping coefficient.
+        A (torch.nn.Parameter): Oscillator amplitude.
+        E0 (torch.nn.Parameter): Resonance energy.
+        C (torch.nn.Parameter): Damping coefficient.
     """
     def __init__(self,
                  A: torch.nn.Parameter,
@@ -175,35 +174,54 @@ class Cauchy(BaseDispersion):
     """
     Implements the Cauchy dispersion model for optical materials.
     
-    This model expresses the complex refractive index as a function of wavelength
-    using the Cauchy equations for both the real and imaginary parts. The model
-    uses six coefficients which are scaled appropriately in the formulas.
+    This model expresses the complex refractive index as a function of wavelength using 
+    the Cauchy equations for both the real and imaginary parts. It employs six coefficients,
+    provided as torch.nn.Parameter objects, which are scaled appropriately in the formulas.
     
+    The real part (n) and the imaginary part (k) of the refractive index are computed as:
+        n = A + (1e4 * B) / wavelength² + (1e9 * C) / wavelength⁴
+        k = D + (1e4 * E) / wavelength² + (1e9 * F) / wavelength⁴
+    so that the complex refractive index is:
+        ñ = n + i * k
+
     Attributes:
         dtype (torch.dtype): Data type for tensor computations.
         device (torch.device): Device (e.g., CPU or GPU) on which computations are performed.
-        wavelength (torch.Tensor): Tensor of wavelengths at which the dispersion is evaluated.
-        coefficients (List[torch.Tensor]): List of six coefficients [A, B, C, D, E, F] converted to tensors.
+        A, B, C (torch.nn.Parameter): Coefficients for the real part of the refractive index.
+        D, E, F (torch.nn.Parameter): Coefficients for the imaginary part (extinction) of the refractive index.
     """
 
     def __init__(self,
-                 coefficients: List[torch.nn.Parameter],
+                 A = torch.nn.Parameter,
+                 B = torch.nn.Parameter,
+                 C = torch.nn.Parameter,
+                 D = torch.nn.Parameter,
+                 E = torch.nn.Parameter,
+                 F = torch.nn.Parameter,
                  dtype: torch.dtype = torch.float,
                  device: torch.device = torch.device('cpu'),
         ) -> None:
         """
-        Initialize the Cauchy dispersion model with specified coefficients and parameters.
+        Initialize the Cauchy dispersion model with specified coefficients.
         
         Args:
-            coefficients (List[float]): A list of six floats representing the Cauchy coefficients:
-                A, B, C for the real part and D, E, F for the imaginary part.
-            wavelength (torch.Tensor): Tensor of wavelengths at which to evaluate the model.
-            dtype (torch.dtype): Data type to be used for all tensor operations.
-            device (torch.device): Device on which tensor operations will be executed.
+            A (torch.nn.Parameter): Coefficient for the constant term in the real part.
+            B (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the real part.
+            C (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the real part.
+            D (torch.nn.Parameter): Coefficient for the constant term in the imaginary part.
+            E (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the imaginary part.
+            F (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the imaginary part.
+            dtype (torch.dtype, optional): Data type for tensor operations. Defaults to torch.float.
+            device (torch.device, optional): Device on which tensor operations will be executed. Defaults to CPU.
         """
         self.dtype = dtype
         self.device = device
-        self.coefficients = coefficients
+        self.A = A
+        self.B = B
+        self.C = C
+        self.D = D
+        self.E = E
+        self.F = F
 
     def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
@@ -218,9 +236,9 @@ class Cauchy(BaseDispersion):
         Returns:
             torch.Tensor: Complex refractive index evaluated at the specified wavelengths.
         """
-        A, B, C, D, E, F = self.coefficients
-        n = A + 1e4 * B / wavelength**2 + 1e9 * C / wavelength**4
-        k = D + 1e4 * E / wavelength**2 + 1e9 * F / wavelength**4
+        
+        n = self.A + 1e4 * self.B / wavelength**2 + 1e9 * self.C / wavelength**4
+        k = self.D + 1e4 * self.E / wavelength**2 + 1e9 * self.F / wavelength**4
         return n + 1j * k
 
     def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
@@ -239,13 +257,14 @@ class Cauchy(BaseDispersion):
     
     def __repr__(self) -> str:
         """
-        Return a string representation of the dispersion instance.
-
+        Return a string representation of the Cauchy dispersion instance.
+        
         Returns:
-            str: A string summarizing the dispersion.
+            str: A string summarizing the Cauchy dispersion model with its coefficients,
+                 data type, and device.
         """
         
-        return (f"Cauchy Dispersion(Coefficients(A,B,C,D,E,F):{self.coefficients}, dtype: {self.dtype}, device: {self.device})")
+        return (f"Cauchy Dispersion(Coefficients(A,B,C,D,E,F):{[self.A, self.B, self.C, self.D, self.E, self.F]}, dtype: {self.dtype}, device: {self.device})")
 
 
 class TaucLorentz(BaseDispersion):
@@ -266,18 +285,37 @@ class TaucLorentz(BaseDispersion):
     Attributes:
         dtype (torch.dtype): Data type for tensor computations.
         device (torch.device): Device on which tensor operations are performed.
-        coefficients (List[torch.nn.Parameter]): A list containing four parameters corresponding to 
-            [Eg, A, E0, C] used in the model.
+        Eg (torch.nn.Parameter): Optical band gap energy.
+        A (torch.nn.Parameter): Amplitude of the transition.
+        E0 (torch.nn.Parameter): Resonance energy.
+        C (torch.nn.Parameter): Broadening (damping) parameter.
     """
 
     def __init__(self,
-                 coefficients: List[torch.nn.Parameter],
+                 Eg :torch.nn.Parameter,
+                 A : torch.nn.Parameter,
+                 E0 : torch.nn.Parameter,
+                 C : torch.nn.Parameter,
                  dtype: torch.dtype = torch.float,
                  device: torch.device = torch.device('cpu'),        
         ) -> None:
+        """
+        Initialize the TaucLorentz model with the specified parameters.
+        
+        Args:
+            Eg (torch.nn.Parameter): Optical band gap energy.
+            A (torch.nn.Parameter): Amplitude of the transition.
+            E0 (torch.nn.Parameter): Resonance energy.
+            C (torch.nn.Parameter): Broadening (damping) parameter.
+            dtype (torch.dtype, optional): Data type for tensor operations. Defaults to torch.float.
+            device (torch.device, optional): Device for tensor operations. Defaults to CPU.
+        """
         self.dtype = dtype
         self.device = device
-        self.coefficients = coefficients
+        self.Eg = Eg
+        self.A = A
+        self.E0 = E0
+        self.C = C
     
     def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
         """
@@ -330,52 +368,51 @@ class TaucLorentz(BaseDispersion):
         
         E = (plank_constant*c_constant/e_constant)/(wavelength)
 
-        Eg, A, E0, C = self.coefficients
         
         #Calculation of imaginary part of electric permittivity
-        if E > Eg:
-            epsilon_i = (1/E)*(A*E0*C*(E - Eg)**2)/((E**2 - E0**2)**2 + C**2*E**2)
+        if E > self.Eg:
+            epsilon_i = (1/E)*(self.A*self.E0*self.C*(E - self.Eg)**2)/((E**2 - self.E0**2)**2 + self.C**2*E**2)
         else:
             epsilon_i = 0
 
         #Calculation of real part of electric permittivity
-        a_ln = (Eg**2 - E0**2)*(E**2) + (Eg**2)*(C**2) - (E0**2)*(E0**2 + 3*Eg**2)
-        a_atan = (E**2 - E0**2)*(E0**2 + Eg**2) + Eg**2*C**2
-        a_alpha = torch.sqrt(4*E0**2 - C**2)
-        a_gamma2 = (E0**2 - 0.5 * (C**2))
-        a_ksi4 = (E**2 - a_gamma2)**2 + 0.25 * a_alpha**2 * C**2
+        a_ln = (self.Eg**2 - self.E0**2)*(E**2) + (self.Eg**2)*(self.C**2) - (self.E0**2)*(self.E0**2 + 3*self.Eg**2)
+        a_atan = (E**2 - self.E0**2)*(self.E0**2 + self.Eg**2) + self.Eg**2*self.C**2
+        a_alpha = torch.sqrt(4*self.E0**2 - self.C**2)
+        a_gamma2 = (self.E0**2 - 0.5 * (self.C**2))
+        a_ksi4 = (E**2 - a_gamma2)**2 + 0.25 * a_alpha**2 * self.C**2
         
-        epsilon_r1_1 = (A * C)/(torch.pi * a_ksi4)
-        epsilon_r1_2 = a_ln / (2 * a_alpha * E0)
-        epsilon_r1_3 = E0**2 + Eg**2 + a_alpha * Eg
-        epsilon_r1_4 = E0**2 + Eg**2 - a_alpha * Eg
+        epsilon_r1_1 = (self.A * self.C)/(torch.pi * a_ksi4)
+        epsilon_r1_2 = a_ln / (2 * a_alpha * self.E0)
+        epsilon_r1_3 = self.E0**2 + self.Eg**2 + a_alpha * self.Eg
+        epsilon_r1_4 = self.E0**2 + self.Eg**2 - a_alpha * self.Eg
         epsilon_r1_5 = torch.log(epsilon_r1_3 / epsilon_r1_4)
         
         epsilon_r1 = epsilon_r1_1 * epsilon_r1_2 * epsilon_r1_5
         
-        epsilon_r2_1 = - A / (torch.pi * a_ksi4)
-        epsilon_r2_2 = a_atan / E0
-        epsilon_r2_3 = (a_alpha + 2 * Eg) / C
-        epsilon_r2_4 = (a_alpha - 2 * Eg) / C
+        epsilon_r2_1 = - self.A / (torch.pi * a_ksi4)
+        epsilon_r2_2 = a_atan / self.E0
+        epsilon_r2_3 = (a_alpha + 2 * self.Eg) / self.C
+        epsilon_r2_4 = (a_alpha - 2 * self.Eg) / self.C
         epsilon_r2_5 = torch.pi - torch.arctan(epsilon_r2_3) + torch.arctan(epsilon_r2_4)
     
         epsilon_r2 = epsilon_r2_1 * epsilon_r2_2 * epsilon_r2_5
         
-        epsilon_r3_1 = (2 * A * E0)/(torch.pi * a_ksi4 * a_alpha)
-        epsilon_r3_2 = Eg * (E**2 - a_gamma2)
-        epsilon_r3_3 = 2 * (a_gamma2 - Eg**2) / (a_alpha * C)
+        epsilon_r3_1 = (2 * self.A * self.E0)/(torch.pi * a_ksi4 * a_alpha)
+        epsilon_r3_2 = self.Eg * (E**2 - a_gamma2)
+        epsilon_r3_3 = 2 * (a_gamma2 - self.Eg**2) / (a_alpha * self.C)
         epsilon_r3_4 = torch.pi + 2 * torch.arctan(epsilon_r3_3)
         
         epsilon_r3 = epsilon_r3_1 * epsilon_r3_2 * epsilon_r3_4
         
-        epsilon_r4_1 = -(A * E0 * C) / (torch.pi * a_ksi4)
-        epsilon_r4_2 = (E**2 + Eg**2) / E
-        epsilon_r4_3 = torch.log(torch.abs(E - Eg) / (E + Eg))
+        epsilon_r4_1 = -(self.A * self.E0 * self.C) / (torch.pi * a_ksi4)
+        epsilon_r4_2 = (E**2 + self.Eg**2) / E
+        epsilon_r4_3 = torch.log(torch.abs(E - self.Eg) / (E + self.Eg))
         epsilon_r4 = epsilon_r4_1 * epsilon_r4_2 * epsilon_r4_3
         
-        epsilon_r5_1 = (2 * A * E0 * C * Eg) / (torch.pi * a_ksi4)
-        epsilon_r5_2 = torch.abs(E - Eg) * (E + Eg)
-        epsilon_r5_3 = torch.sqrt((E0**2 - Eg**2)**2 + Eg**2 * C**2)
+        epsilon_r5_1 = (2 * self.A * self.E0 * self.C * self.Eg) / (torch.pi * a_ksi4)
+        epsilon_r5_2 = torch.abs(E - self.Eg) * (E + self.Eg)
+        epsilon_r5_3 = torch.sqrt((self.E0**2 - self.Eg**2)**2 + self.Eg**2 * self.C**2)
         epsilon_r5_4 = torch.log(epsilon_r5_2 / epsilon_r5_3)
         epsilon_r5 = epsilon_r5_1 * epsilon_r5_4
         
@@ -393,10 +430,11 @@ class TaucLorentz(BaseDispersion):
     
     def __repr__(self) -> str:
         """
-        Return a string representation of the dispersion instance.
-
+        Return a string representation of the TaucLorentz dispersion instance.
+        
         Returns:
-            str: A string summarizing the dispersion.
+            str: A string summarizing the TaucLorentz dispersion model with its parameters,
+                 data type, and device.
         """
-        return (f"TaucLorentz Dispersion(Coefficients(Eg, A, E0, C):{self.coefficients}, dtype: {self.dtype}, device: {self.device})")
+        return (f"TaucLorentz Dispersion(Coefficients(Eg, A, E0, C):{[self.Eg, self.A, self.E0, self.C]}, dtype: {self.dtype}, device: {self.device})")
 

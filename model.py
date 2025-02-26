@@ -1,14 +1,7 @@
 from typing import List, Tuple, Literal
 from layer import BaseLayer, LayerType
-from T_matrix import T_matrix
-from optical_properties import OpticalProperties
-import torch 
-
-
-from typing import List, Tuple, Literal
-from layer import BaseLayer, LayerType
-from T_matrix import T_matrix
-from optical_properties import OpticalProperties
+from t_matrix import T_matrix
+from optical_calculator import OpticalCalculator
 import torch 
 
 class Model:
@@ -92,7 +85,7 @@ class Model:
                 f"  Dtype: {self.dtype}, Device: {self.device}\n"
                 f")")
 
-    def evaluate(self, wavelengths: torch.Tensor, angles: torch.Tensor) -> OpticalProperties:
+    def evaluate(self, wavelengths: torch.Tensor, angles: torch.Tensor) -> OpticalCalculator:
         """
         Evaluate the optical properties of the model at given wavelengths and angles.
 
@@ -130,7 +123,7 @@ class Model:
         T_p = torch.einsum('...ij,...jk->...ik', T_env_p,
                              torch.einsum('...ij,...jk->...ik', T_structure_p, T_subs_p))
 
-        return OpticalProperties(Tm_s=T_s, Tm_p=T_p, n_env=n_env, n_subs=n_subs, nx=nx)
+        return OpticalCalculator(Tm_s=T_s, Tm_p=T_p, n_env=n_env, n_subs=n_subs, nx=nx)
 
     def structure_matrix(self, wavelengths: torch.Tensor, angles: torch.Tensor, nx: torch.Tensor, pol: str) -> torch.Tensor:
         """
