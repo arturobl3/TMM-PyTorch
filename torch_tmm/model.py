@@ -49,6 +49,11 @@ class Model:
                 or if any layer in the structure has an invalid type.
         """
         self.dtype = dtype
+        if self.dtype == torch.complex64:
+            self.dtype_real = torch.float32
+        else:
+            self.dtype_real = torch.float64
+
         self.device = device
         self.T_matrix = T_matrix(self.dtype, self.device)
 
@@ -101,12 +106,22 @@ class Model:
             OpticalProperties: An object containing the s- and p-polarization transfer matrices,
                                and the refractive indices of the environment and substrate.
         """
-
-        angles = torch.deg2rad(angles.to(torch.float64)).to(self.dtype)
-
-        n_env = self.env.material.refractive_index(wavelengths)
-        n_subs = self.subs.material.refractive_index(wavelengths)
+        # unpack quantities and transfer to the correct device and data type
+        angles = torch.deg2rad(angles.to(self.dtype_real)).to(self.dtype).to(self.device)
+        wavelengths = wavelengths.to(self.dtype).to(self.device)
+        angles = angles.to(self.dtype).to(self.device)
+        n_env = self.env.material.refractive_index(wavelengths).to(self.dtype).to(self.device)
+        n_subs = self.subs.material.refractive_index(wavelengths).to(self.dtype).to(self.device)
         n_air = torch.ones_like(n_env, dtype=self.dtype, device=self.device)
+        
+        # check for correct input shape 
+        assert wavelengths.ndim == 1, 'Wavelengths must be a 1D tensor'
+        assert angles.ndim == 1, 'Angles must be a 1D tensor'
+        assert n_env.ndim == 1, 'Refractive index of the environment must be a 1D tensor'
+        assert n_subs.ndim == 1, 'Refractive index of the substrate must be a 1D tensor'
+        assert wavelengths.shape[0] == n_env.shape[0], 'Wavelengths and refractive index of the environment must have the same length'
+        assert wavelengths.shape[0] == n_subs.shape[0], 'Wavelengths and refractive index of the substrate must have the same length'
+        
         nx = n_env[:, None] * torch.sin(angles[None, :])
 
         # s-polarization
@@ -148,8 +163,13 @@ class Model:
 
         # Multiply the transfer matrix for each layer in the structure.
         for i, layer in enumerate(self.structure):
-            d = layer.thickness
-            n = layer.material.refractive_index(wavelengths)
+            #check input data shape and transform to correct data type and device 
+            d = layer.thickness.to(self.dtype_real).to(self.device)
+            n = layer.material.refractive_index(wavelengths).to(self.dtype).to(self.device)
+            assert n.ndim == 1, 'Refractive index must be a 1D tensor'
+            assert d.ndim == 0, 'Thickness must be a scalar tensor'
+            assert wavelengths.shape[0] == n.shape[0], 'Wavelengths and refractive index must have the same length'
+            
             T_layer = self.T_matrix.coherent_layer(pol=pol, n=n, d=d, wavelengths=wavelengths, nx=nx)
             T_structure = torch.einsum('...ij,...jk->...ik', T_structure, T_layer)
 

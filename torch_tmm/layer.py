@@ -16,7 +16,7 @@ class BaseLayer:
     
     Attributes:
         material (BaseMaterial): The material associated with the layer.
-        thickness (torch.Tensor): The physical thickness of the layer.
+        thickness (torch.nn.Parameter): The physical thickness of the layer.
         type (LayerType): A literal string indicating the layer type, which
             can be one of the following:
                 - "coh": Layers that exhibit coherent interference effects.
@@ -26,7 +26,7 @@ class BaseLayer:
 
     def __init__(self,
                  material: BaseMaterial,
-                 thickness: torch.Tensor,
+                 thickness: torch.nn.Parameter,
                  LayerType: LayerType
                  ) -> None:
         """
