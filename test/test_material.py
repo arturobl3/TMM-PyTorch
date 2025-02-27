@@ -1,8 +1,8 @@
 import torch
 import time
 from typing import List
-from dispersion import Constant_epsilon, Lorentz, BaseDispersion
-from material import BaseMaterial
+from torch_tmm.dispersion import Constant_epsilon, Lorentz, BaseDispersion
+from torch_tmm import BaseMaterial
 
 def base_material_test(dispersions :List[BaseDispersion],
                          wavelengths : torch.Tensor,

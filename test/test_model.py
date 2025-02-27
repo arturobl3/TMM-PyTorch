@@ -1,10 +1,10 @@
 import torch
 import numpy as np
 import time
-from model import Model
-from dispersion import Constant_epsilon
-from material import BaseMaterial
-from layer import BaseLayer
+from torch_tmm.model import Model
+from torch_tmm.layer import BaseLayer
+from torch_tmm.material import BaseMaterial
+from torch_tmm.dispersion import Constant_epsilon
 from typing import List
 
 
@@ -60,9 +60,10 @@ def model_test_single_layer(wavelengths: torch.Tensor,
     model = Model(env, structure, subs, dtype, device)
     OpticalProperties = model.evaluate(wavelengths, angles)
     
-    
-    R_s, R_p = OpticalProperties.reflection()
-    T_s, T_p = OpticalProperties.transmission()
+    R_s = OpticalProperties.reflection('s')
+    R_p = OpticalProperties.reflection('p')
+    T_s = OpticalProperties.transmission('s')
+    T_p = OpticalProperties.transmission('p')
     end = time.time()
 
     #Analytical method
@@ -91,8 +92,8 @@ def model_test_single_layer(wavelengths: torch.Tensor,
     ## p polarization
     r12 = (n[:,None]**2*n1z - n_env[:,None]**2*n2z)/(n[:,None]**2*n1z + n_env[:,None]**2*n2z)
     r23 = (n_subs[:,None]**2*n2z - n[:,None]**2*n3z)/(n_subs[:,None]**2*n2z + n[:,None]**2*n3z)
-    t12 = 2*n[:,None]**2*n1z/(n[:,None]**2*n1z + n_env[:,None]**2*n2z)
-    t23 = 2*n_subs[:,None]**2*n2z/(n_subs[:,None]**2*n2z + n[:,None]**2*n3z)
+    t12 = 2*n_env[:,None]*n[:,None]*n1z/(n[:,None]**2*n1z + n_env[:,None]**2*n2z)
+    t23 = 2*n[:,None]*n_subs[:,None]*n2z/(n_subs[:,None]**2*n2z + n[:,None]**2*n3z)
 
     r_analytical = (r12 + r23*torch.exp(2j*beta))/(1 + r12*r23*torch.exp(2j*beta))
     t_analytical = t12*t23*torch.exp(1j*beta)/(1 + r12*r23*torch.exp(2j*beta))
@@ -169,8 +170,10 @@ def model_test_double_layer(wavelengths: torch.Tensor,
     OpticalProperties = model.evaluate(wavelengths, angles)
     
     
-    R_s, R_p = OpticalProperties.reflection()
-    T_s, T_p = OpticalProperties.transmission()
+    R_s = OpticalProperties.reflection('s')
+    R_p = OpticalProperties.reflection('p')
+    T_s = OpticalProperties.transmission('s')
+    T_p = OpticalProperties.transmission('p')
     end = time.time()
 
     #Analytical method
@@ -207,9 +210,9 @@ def model_test_double_layer(wavelengths: torch.Tensor,
     r12 = (n1[:,None]**2*n1z - n_env[:,None]**2*n2z)/(n1[:,None]**2*n1z + n_env[:,None]**2*n2z)
     r23 = (n2[:,None]**2*n2z - n1[:,None]**2*n3z)/(n2[:,None]**2*n2z + n1[:,None]**2*n3z)
     r34 = (n_subs[:,None]**2*n3z - n2[:,None]**2*n4z)/(n_subs[:,None]**2*n3z + n2[:,None]**2*n4z)
-    t12 = 2*n1[:,None]**2*n1z/(n1[:,None]**2*n1z + n_env[:,None]**2*n2z)
-    t23 = 2*n2[:,None]**2*n2z/(n2[:,None]**2*n2z + n1[:,None]**2*n3z)
-    t34 =2*n_subs[:,None]**2*n3z/(n_subs[:,None]**2*n3z + n2[:,None]**2*n4z)
+    t12 = 2*n_env[:,None]*n1[:,None]*n1z/(n1[:,None]**2*n1z + n_env[:,None]**2*n2z)
+    t23 = 2*n1[:,None]*n2[:,None]*n2z/(n2[:,None]**2*n2z + n1[:,None]**2*n3z)
+    t34 =2*n2[:,None]*n_subs[:,None]*n3z/(n_subs[:,None]**2*n3z + n2[:,None]**2*n4z)
 
     r234 = (r23 + r34*torch.exp(2j*beta2))/(1 + r23*r34*torch.exp(2j*beta2))
     t234 = t23*t34*torch.exp(1j*beta2)/(1 + r23*r34*torch.exp(2j*beta2))

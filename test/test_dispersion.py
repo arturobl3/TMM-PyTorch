@@ -1,6 +1,6 @@
 import torch
 import time
-from dispersion import *
+from torch_tmm.dispersion import *
 
 def flat_dispersion_test(epsilon: torch.nn.Parameter,
                          wavelengths : torch.Tensor,

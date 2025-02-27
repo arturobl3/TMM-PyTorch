@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import time
-from t_matrix import T_matrix
+from torch_tmm.t_matrix import T_matrix
 
 def single_layer_test(wavelengths: torch.Tensor,
                         angles: torch.Tensor, 
