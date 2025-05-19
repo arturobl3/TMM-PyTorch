@@ -2,7 +2,8 @@
 
 A PyTorch-based library for optical multilayer stacks simulation using the Transfer-Matrix Method (TMM). TMM-PyTorch combines complex-valued dispersion models, GPU acceleration, and PyTorch’s autograd to let you both **compute** reflectance/transmission spectra and **fit** layer or material parameters end-to-end.
 
-The framework is still under development and some functionality can be abscent. 
+**The framework is still under development and some functionality can be abscent** 
+
 ---
 
 ## Key Features
