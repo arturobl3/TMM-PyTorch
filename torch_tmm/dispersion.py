@@ -1,9 +1,35 @@
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from abc import ABC, abstractmethod
 import torch 
+import  numpy as np
+import torch.nn as nn
 
-class BaseDispersion(ABC):
-    """ Abstract base class to define dispersion models for materials"""
+class BaseDispersion(nn.Module, ABC):
+    """ 
+    Abstract base class to define dispersion models for materials
+
+    Attributes:
+        dtype (torch.dtype): The data type for the torch tensor (e.g., torch.float32).
+        device (torch.device): The device on which to allocate tensors (e.g., CPU or GPU).
+    """
+
+    def __init__(self,
+                 dtype: torch.dtype = torch.float,
+                 device: torch.device = torch.device('cpu')
+                 ) -> None:
+        """
+        Initializes the base dispersion model with the specified data type and device.
+
+        Args:
+            dtype (torch.dtype, optional): The data type for model parameters (default: torch.float32).
+            device (torch.device, optional): The computation device (default: CPU).
+
+        This constructor ensures that all dispersion models derived from this class will operate with
+        a consistent data type and device.
+        """
+        super().__init__()
+        super().__setattr__("_dtype", dtype)
+        super().__setattr__("_device", device)
 
     @abstractmethod
     def epsilon(self, wavelengths: torch.Tensor, *args, **kwargs) -> torch.tensor:
@@ -17,6 +43,139 @@ class BaseDispersion(ABC):
     def __repr__(self) -> str:
         """method to return the dispersion parameters"""
 
+    @property
+    def dtype(self) -> torch.dtype:
+        return self._dtype
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+    
+    def _validate_value(self,
+                        name: str, 
+                        value: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter]
+                        ) -> None:
+        """
+        Validates the provided value.
+
+        Raises:
+            ValueError: If the value is of a disallowed type (e.g., bool, str, list)
+                        or if it's a tensor/parameter that doesn't contain exactly one element.
+        """
+        if isinstance(value, bool):
+            raise ValueError(f"Parameter '{name}' cannot be of type bool.")
+        
+        if isinstance(value, (str, list, tuple, dict)):
+            raise ValueError(f"Parameter '{name}' must be a single numeric value, not {type(value).__name__}.")
+        
+        if isinstance(value, np.ndarray):
+            if value.size != 1:
+                raise ValueError(
+                    f"Parameter '{name}' must be a single numeric value; got numpy array with {value.size} elements."
+                )
+            
+        if isinstance(value, (torch.Tensor, nn.Parameter)):
+            # If it's a tensor or parameter, ensure it has exactly one element.
+            tensor_val = value.data if isinstance(value, nn.Parameter) else value
+            if tensor_val.numel() != 1:
+                raise ValueError(
+                    f"Parameter '{name}' must be a single numeric value; got tensor with {tensor_val.numel()} elements."
+                )
+
+    def _convert_value(self, 
+                       value: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter]
+                       ) -> nn.Parameter:
+        """
+        Converts a value (float, int, torch.Tensor, or nn.Parameter) into a torch.nn.Parameter
+        with the current dtype and device.
+        """
+        if not isinstance(value, torch.Tensor): #If not torch.Tensor convert to it
+            value = torch.tensor(value, dtype=self._dtype, device=self._device)
+        else:
+            value = value.to(dtype=self._dtype, device=self._device)
+        return nn.Parameter(value, requires_grad=False)
+
+    def __setattr__(self, 
+                    name: str, 
+                    value: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter]
+                    ) -> None:
+        """
+        Overrides attribute assignment so that any numerical parameter provided (float, int, Tensor)
+        is automatically converted to a torch.nn.Parameter registered in the module.
+
+        Note: The conversion is done only once during assignment. Later updates of device/dtype are handled via `.to()`.
+        """
+        if name in ('_dtype', '_device'):
+            super().__setattr__(name, value)      
+            return
+
+        # user-facing attributes go through validation/conversion
+        self._validate_value(name, value)
+        super().__setattr__(name, self._convert_value(value))
+
+    def to(self, *args, **kwargs):
+        """
+        Mirrors nn.Module.to **and** synchronises self._dtype/_device
+        with wherever the parameters actually ended up.
+        """
+        # Let nn.Module do the heavy lifting first (handles every call style)
+        ret = super().to(*args, **kwargs)
+
+        # Pick the dtype/device of the first parameter or buffer
+        try:
+            p = next(self.parameters())
+        except StopIteration:
+            p = None
+        if p is None:                                    # parameter-less module
+            self._dtype = kwargs.get('dtype', self._dtype)
+            self._device = kwargs.get('device', self._device)
+        else:
+            self._dtype = p.dtype
+            self._device = p.device
+        return ret      # keep nn.Module semantics (returns self)
+    
+    @staticmethod
+    def _as_complex_dtype(real_dtype: torch.dtype) -> torch.dtype:
+        """
+        Promote a real floating dtype to the minimal matching complex dtype.
+        float16/32/bfloat16 ➜ complex64, float64 ➜ complex128.
+        (If `real_dtype` is already complex, it is returned unchanged.)
+        """
+        if real_dtype.is_complex:
+            return real_dtype
+        if real_dtype == torch.float64:
+            return torch.complex128
+        if real_dtype.is_floating_point:
+            return torch.complex64
+        raise TypeError(f"{real_dtype} is not a floating dtype.")
+
+    def _prepare_wavelengths(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        • Ensures wavelengths > 0 (no zero / negative wavelengths).  
+        • Casts to this module’s real dtype & device.  
+        • Keeps gradient flow intact (no `detach` / `clone`).
+        """
+        if not torch.is_floating_point(wavelengths):
+            raise TypeError("`wavelength` must be a floating tensor.")
+
+        if (wavelengths <= 0).any():
+            bad = wavelengths[wavelengths <= 0]
+            raise ValueError(f"Wavelengths must be positive; got {bad.cpu().tolist()}")
+
+        return wavelengths.to(dtype=self.dtype, device=self.device)
+    
+    def _sync_dtype_device(self):
+        try:
+            p = next(self.parameters())
+            self._dtype, self._device = p.dtype, p.device
+        except StopIteration:
+            pass
+
+    def _apply(self, fn):
+        out = super()._apply(fn)    # let Module move the tensors
+        self._sync_dtype_device()   # then sync our mirrors
+        return out
+
 
 class Constant_epsilon(BaseDispersion):
     """
@@ -26,46 +185,68 @@ class Constant_epsilon(BaseDispersion):
 
     Attributes:
         epsilon_const (torch.nn.Parameter): The constant dielectric permittivity value.
-        dtype (torch.dtype): The data type for the torch tensor (e.g., torch.float32).
-        device (torch.device): The device on which to allocate tensors (e.g., CPU or GPU).
     """
 
     def __init__(self,
                  epsilon_const: torch.nn.Parameter,
-                 dtype: torch.dtype = torch.float,
-                 device: torch.device = torch.device('cpu'),
-    )-> None:
+                )-> None:
         """
-        Initialize the flatRefractiveIndex instance.
+        Initialize the Constant_epsilon instance.
 
         Args:
             epsilon_const (torch.nn.Parameter): The constant dielectric permittivity value.
-            dtype (torch.dtype): The desired data type for the output tensors.
-            device (torch.device): The device on which the tensors should be allocated.
         """
+        super().__init__()
         self.epsilon_const = epsilon_const
-        self.dtype = dtype
-        self.device = device
 
 
     def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
-        Compute the dielectric permittivity (epsilon).
-        The dielectric permittivity is calculated as the square of the refractive index.
-        Returns:
-            torch.tensor: A 1D tensor of size `wavelengths` where each element is set
-                          to the constant refractive index value `n`.
+        Compute the (generally complex) refractive index **n(λ)** for each input wavelength.
+
+        The constant-ε model yields
+            n(λ) = √ε ,
+        so the value is the same for every λ, but the tensor you receive has
+        the same shape and device as `wavelengths`, allowing easy broadcasting
+        or later concatenation with wavelength-dependent models.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** at which the refractive index is
+            requested. Must be a positive, floating tensor.
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor of identical shape to `wavelengths`, containing the
+            refractive index.
         """
-        epsilon = self.epsilon(wavelengths)
-        return torch.sqrt(epsilon)
+        return torch.sqrt(self.epsilon(wavelengths))
     
     def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
-        Generate the dielectric permittivity tensor.
-        Returns:
-            torch.tensor: A tensor representing the dielectric permittivity across the wavelengths.
+        Dielectric permittivity **ε(λ)** for the constant-ε model.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).  The
+            values are used only for broadcasting, not for computation.
+
+        Returns
+        -------
+        torch.Tensor
+            Complex tensor filled with the constant permittivity value,
+            matching `wavelengths` in shape, device, and gradient behaviour.
         """
-        return self.epsilon_const * torch.ones_like(wavelengths, dtype=self.dtype, device= self.device)
+        wavelengths = self._prepare_wavelengths(wavelengths)
+        c_dtype = self._as_complex_dtype(self.dtype)
+
+        eps_const = self.epsilon_const.to(dtype=c_dtype, device=self.device)
+        epsilon = eps_const * torch.ones_like(wavelengths, dtype=c_dtype, device=self.device)
+        
+        return epsilon
     
     def __repr__(self) -> str:
         """
@@ -75,7 +256,7 @@ class Constant_epsilon(BaseDispersion):
             str: A string summarizing the dispersion.
         """
         
-        return (f"Constant Dispersion(epsilon:{self.epsilon_const}, dtype: {self.dtype}, device: {self.device})")
+        return (f"Constant Dispersion: {self.epsilon_const}")
 
 
 
@@ -83,60 +264,72 @@ class Lorentz(BaseDispersion):
     """
     Implements the Lorentz oscillator model for optical dispersion.
     This class computes the electric permittivity and refractive index based on the Lorentz oscillator model.
-    It extends the BaseDispersion class and uses PyTorch tensors for numerical computations,
-    allowing for efficient evaluation on both CPU and GPU devices.
     
     Attributes:
-        dtype (torch.dtype): The data type used for tensor computations.
-        device (torch.device): The device (e.g., CPU or GPU) on which the tensors are allocated.
-        wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which the dispersion properties are evaluated.
-        A (torch.nn.Parameter): Oscillator amplitude.
-        E0 (torch.nn.Parameter): Resonance energy.
-        C (torch.nn.Parameter): Damping coefficient.
+        wavelengths (torch.Tensor): Tensor of wavelengths (in nanometers) at which the dispersion properties are evaluated.
+        A (torch.nn.Parameter): Oscillator amplitude, eV**2.
+        E0 (torch.nn.Parameter): Resonance energy, eV.
+        C (torch.nn.Parameter): Damping coefficient, eV.
     """
+
+    _hc_over_e: torch.Tensor      # pre-computed in __init__ for speed
+
     def __init__(self,
                  A: torch.nn.Parameter,
                  E0:torch.nn.Parameter,
-                 C:torch.nn.Parameter,
-                 dtype: torch.dtype = torch.float,
-                 device: torch.device = torch.device('cpu'),
+                 Gamma:torch.nn.Parameter,
     )-> None:
         """
         Initialize the Lorentz dispersion model with given parameters.
         Args:
-            A (torch.nn.Parameter): Oscillator amplitude.
-            E0 (torch.nn.Parameter): Resonance energy.
-            C (torch.nn.Parameter): Damping coefficient.
-            dtype (torch.dtype): Data type for tensor computations.
-            device (torch.device): Device (e.g., CPU or GPU) to use for tensor computations.
+            A (torch.nn.Parameter): Oscillator amplitude, eV**2.
+            E0 (torch.nn.Parameter): Resonance energy, eV.
+            Gamma (torch.nn.Parameter): Damping coefficient, eV.
         """
-        self.dtype = dtype
-        self.device = device
+        super().__init__()
         self.A = A
         self.E0 = E0
-        self.C = C
+        self.Gamma = Gamma
+
+        hc_over_e = 1.2398419843320026e3   # (h·c/e) in  eV·nm
+        self.register_buffer(
+            "_hc_over_e",
+            torch.tensor(hc_over_e, dtype=self.dtype, device=self.device)
+        )
 
 
-    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
-        Compute the complex refractive index at the given wavelengths
-        The refractive index is calculated as the square root of the electric permittivity:
-            n = sqrt(ε)
+        Complex refractive index **n(λ)** derived from the Lorentz-oscillator
+        permittivity.
 
-        Args:
-            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which to compute the refractive index.
-        Returns:
-            torch.Tensor: The computed complex refractive index.
+        Given the electric permittivity ε(λ) produced by
+        :meth:`~Lorentz.epsilon`, the refractive index is
+
+            n(λ) = √ε(λ)
+
+        with the principal square-root branch.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Positive, floating-point tensor of wavelengths **in nanometres**.
+
+        Returns
+        -------
+        torch.Tensor
+            Complex tensor containing the refractive index at each provided
+            wavelength.
         """
-        return torch.sqrt(self.epsilon(wavelength))
+        return torch.sqrt(self.epsilon(wavelengths))
     
-    def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex electric permittivity using the Lorentz oscillator model.
         The electric permittivity ε is computed using the formula:
-            ε = (A * E0) / (E0^2 - E^2 - i * C * E)
+            ε = A / (E0^2 - E^2 - i * Gamma * E)
         where E is the photon energy calculated as:
-            E = (h * c / e) / (wavelength)  
+            E = (h * c / e) / (wavelengths)  
         Constants:
             - h (Planck constant): 6.62607015e-34 J·s
             - c (Speed of light): 299792458 m/s
@@ -147,15 +340,17 @@ class Lorentz(BaseDispersion):
         Returns:
             torch.Tensor: The computed complex electric permittivity.
         """
-        # Constants
-        plank_constant = torch.tensor(6.62607015e-34, dtype=self.dtype, device = self.device)
-        c_constant = torch.tensor(299792458, dtype=self.dtype, device = self.device)
-        e_constant = torch.tensor(1.60217663e-19, dtype=self.dtype, device = self.device)
-        
-        E = (plank_constant * c_constant / e_constant) / (wavelength)
+        wavelengths = self._prepare_wavelengths(wavelengths)
+        E = self._hc_over_e.to(self.dtype) / wavelengths
+
+        c_dtype = self._as_complex_dtype(self.dtype)
+        E  = E.to(dtype=c_dtype)
+        A  = self.A.to(dtype=c_dtype)
+        E0 = self.E0.to(dtype=c_dtype)
+        Gamma  = self.Gamma.to(dtype=c_dtype)
         
         # Lorentz electric permittivity calculation
-        epsilon = (self.A * self.E0) / (self.E0**2 - E**2 - 1j * self.C * E)
+        epsilon = A / (E0**2 - E**2 - 1j * Gamma * E)
         
         return epsilon  
     
@@ -167,7 +362,7 @@ class Lorentz(BaseDispersion):
             str: A string summarizing the dispersion.
         """
         
-        return (f"Lorentz Dispersion(coefficients (A,E0,C):{self.coefficients}, dtype: {self.dtype}, device: {self.device})")
+        return (f"Lorentz Dispersion(Coefficients (A,E0,Gamma):{self.A, self.E0, self.Gamma})")
 
 
 class Cauchy(BaseDispersion):
@@ -185,21 +380,17 @@ class Cauchy(BaseDispersion):
         ñ = n + i * k
 
     Attributes:
-        dtype (torch.dtype): Data type for tensor computations.
-        device (torch.device): Device (e.g., CPU or GPU) on which computations are performed.
         A, B, C (torch.nn.Parameter): Coefficients for the real part of the refractive index.
         D, E, F (torch.nn.Parameter): Coefficients for the imaginary part (extinction) of the refractive index.
     """
 
     def __init__(self,
-                 A = torch.nn.Parameter,
-                 B = torch.nn.Parameter,
-                 C = torch.nn.Parameter,
-                 D = torch.nn.Parameter,
-                 E = torch.nn.Parameter,
-                 F = torch.nn.Parameter,
-                 dtype: torch.dtype = torch.float,
-                 device: torch.device = torch.device('cpu'),
+                 A: torch.nn.Parameter,
+                 B: torch.nn.Parameter = 0,
+                 C: torch.nn.Parameter = 0,
+                 D: torch.nn.Parameter = 0,
+                 E: torch.nn.Parameter = 0,
+                 F: torch.nn.Parameter = 0,
         ) -> None:
         """
         Initialize the Cauchy dispersion model with specified coefficients.
@@ -211,11 +402,8 @@ class Cauchy(BaseDispersion):
             D (torch.nn.Parameter): Coefficient for the constant term in the imaginary part.
             E (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the imaginary part.
             F (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the imaginary part.
-            dtype (torch.dtype, optional): Data type for tensor operations. Defaults to torch.float.
-            device (torch.device, optional): Device on which tensor operations will be executed. Defaults to CPU.
         """
-        self.dtype = dtype
-        self.device = device
+        super().__init__()
         self.A = A
         self.B = B
         self.C = C
@@ -223,37 +411,63 @@ class Cauchy(BaseDispersion):
         self.E = E
         self.F = F
 
-    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
-        Calculate the complex refractive index at the given wavelengths using the Cauchy model.
-        The real part n and the imaginary part k are computed as:
-            n = A + (1e4 * B) / wavelength² + (1e9 * C) / wavelength⁴
-            k = D + (1e4 * E) / wavelength² + (1e9 * F) / wavelength⁴
-        The complex refractive index is then n + 1j*k.
+        Cauchy-type complex refractive index
 
-        Args:
-            wavelength (torch.Tensor): Tensor of wavelengths at which to compute the refractive index.
-        Returns:
-            torch.Tensor: Complex refractive index evaluated at the specified wavelengths.
+            n(λ) = A + 1e4·B / λ² + 1e9·C / λ⁴
+            k(λ) = D + 1e4·E / λ² + 1e9·F / λ⁴
+            ñ(λ) = n(λ) + i·k(λ)
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Positive wavelengths **in nanometres**.
+
+        Returns
+        -------
+        torch.Tensor
+            Complex refractive index at each λ;  
         """
-        
-        n = self.A + 1e4 * self.B / wavelength**2 + 1e9 * self.C / wavelength**4
-        k = self.D + 1e4 * self.E / wavelength**2 + 1e9 * self.F / wavelength**4
+        wavelengths = self._prepare_wavelengths(wavelengths) 
+        c_dtype = self._as_complex_dtype(self.dtype)
+        wavelengths = wavelengths.to(c_dtype)
+
+        A = self.A.to(dtype=c_dtype)
+        B = self.B.to(dtype=c_dtype)
+        C = self.C.to(dtype=c_dtype)
+        D = self.D.to(dtype=c_dtype)
+        E = self.E.to(dtype=c_dtype)
+        F = self.F.to(dtype=c_dtype)
+
+        n = A + 1e4 * B / wavelengths**2 + 1e9 * C / wavelengths**4
+        k = D + 1e4 * E / wavelengths**2 + 1e9 * F / wavelengths**4
         return n + 1j * k
 
-    def epsilon(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
-        Compute the complex electric permittivity (dielectric constant) at the specified wavelengths.
-        The permittivity is obtained by squaring the complex refractive index
+        Complex electric permittivity **ε(λ)** for this material model.
+
+        The permittivity is obtained directly from the complex refractive
+        index **ñ(λ)** returned by :meth:`refractive_index` via
+
+            ε(λ) = ñ(λ)² .
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Positive, floating-point tensor of wavelengths **in nanometres**
+            at which the permittivity is required.  The tensor may have any
+            shape; the result will have the same shape, device, and complex
+            precision.
+
+        Returns
+        -------
+        torch.Tensor
+            Complex tensor containing ε(λ) for each supplied wavelength.
+        """
         
-        Args:
-            wavelength (torch.Tensor): Tensor of wavelengths at which to compute the permittivity.
-        Returns:
-            torch.Tensor: The complex electric permittivity evaluated at the specified wavelengths.
-        """
-        # Here, self.refractive_index is assumed to be defined in BaseDispersion or elsewhere.
-        # If not, consider replacing it with self.getRefractiveIndex.
-        return (self.refractive_index(wavelength))**2
+        return (self.refractive_index(wavelengths))**2
     
     def __repr__(self) -> str:
         """
@@ -264,7 +478,7 @@ class Cauchy(BaseDispersion):
                  data type, and device.
         """
         
-        return (f"Cauchy Dispersion(Coefficients(A,B,C,D,E,F):{[self.A, self.B, self.C, self.D, self.E, self.F]}, dtype: {self.dtype}, device: {self.device})")
+        return (f"Cauchy Dispersion(Coefficients(A,B,C,D,E,F):{[self.A, self.B, self.C, self.D, self.E, self.F]})")
 
 
 class TaucLorentz(BaseDispersion):
@@ -283,21 +497,19 @@ class TaucLorentz(BaseDispersion):
     arctan terms.
 
     Attributes:
-        dtype (torch.dtype): Data type for tensor computations.
-        device (torch.device): Device on which tensor operations are performed.
         Eg (torch.nn.Parameter): Optical band gap energy.
         A (torch.nn.Parameter): Amplitude of the transition.
         E0 (torch.nn.Parameter): Resonance energy.
         C (torch.nn.Parameter): Broadening (damping) parameter.
     """
 
+    _hc_over_e: torch.Tensor      # pre-computed in __init__ for speed
+
     def __init__(self,
                  Eg :torch.nn.Parameter,
                  A : torch.nn.Parameter,
                  E0 : torch.nn.Parameter,
-                 C : torch.nn.Parameter,
-                 dtype: torch.dtype = torch.float,
-                 device: torch.device = torch.device('cpu'),        
+                 Gamma : torch.nn.Parameter,       
         ) -> None:
         """
         Initialize the TaucLorentz model with the specified parameters.
@@ -306,18 +518,21 @@ class TaucLorentz(BaseDispersion):
             Eg (torch.nn.Parameter): Optical band gap energy.
             A (torch.nn.Parameter): Amplitude of the transition.
             E0 (torch.nn.Parameter): Resonance energy.
-            C (torch.nn.Parameter): Broadening (damping) parameter.
-            dtype (torch.dtype, optional): Data type for tensor operations. Defaults to torch.float.
-            device (torch.device, optional): Device for tensor operations. Defaults to CPU.
+            Gamma (torch.nn.Parameter): Broadening (damping) parameter.
         """
-        self.dtype = dtype
-        self.device = device
+        super().__init__()
         self.Eg = Eg
         self.A = A
         self.E0 = E0
-        self.C = C
+        self.Gamma = Gamma
+
+        hc_over_e = 1.2398419843320026e3   # (h·c/e) in  eV·nm
+        self.register_buffer(
+            "_hc_over_e",
+            torch.tensor(hc_over_e, dtype=self.dtype, device=self.device)
+        )
     
-    def refractive_index(self, wavelength: torch.Tensor) -> torch.Tensor:
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
         Compute the complex refractive index at the given wavelengths.
 
@@ -326,14 +541,14 @@ class TaucLorentz(BaseDispersion):
         Returns:
             torch.Tensor: Complex refractive index evaluated at the specified wavelengths.
         """
-        return torch.sqrt(self.epsilon(wavelength))
+        return torch.sqrt(self.epsilon(wavelengths))
     
-    def epsilon(self, wavelength: torch.Tensor):
+    def epsilon(self, wavelengths: torch.Tensor):
         """
         Compute the complex dielectric function using the Tauc-Lorentz model.
 
-        The photon energy E is calculated from the wavelength (meters) using:
-            E = (h * c / e) / (wavelength)
+        The photon energy E is calculated from the wavelengths (meters) using:
+            E = (h * c / e) / (wavelengths)
         where:
             - h (Planck constant) = 6.62607015e-34 J·s,
             - c (speed of light) = 299792458 m/s,
@@ -343,10 +558,10 @@ class TaucLorentz(BaseDispersion):
             Eg: Optical band gap energy.
             A: Amplitude of the transition.
             E0: Resonance energy.
-            C: Broadening (damping) parameter.
+            Gamma: Broadening (damping) parameter.
 
         For photon energies E greater than Eg, the imaginary part ε_i is computed by:
-            ε_i = (1/E) * (A * E0 * C * (E - Eg)^2) / ((E^2 - E0^2)^2 + C^2 * E^2)
+            ε_i = (1/E) * (A * E0 * Gamma * (E - Eg)^2) / ((E^2 - E0^2)^2 + Gamma^2 * E^2)
         For E ≤ Eg, ε_i is set to 0.
 
         The real part ε_r is obtained from several contributions (epsilon_r1 through epsilon_r5)
@@ -356,77 +571,68 @@ class TaucLorentz(BaseDispersion):
             ε = ε_r + i * ε_i
 
         Args:
-            wavelength (torch.Tensor): Tensor of wavelengths (meters) for evaluation.
+            wavelengths (torch.Tensor): Tensor of wavelengths (meters) for evaluation.
         Returns:
             torch.Tensor: Complex dielectric function evaluated at the specified wavelengths.
         """
 
-        #Constants
-        plank_constant = 6.62607015*1e-34
-        c_constant = 299792458
-        e_constant = 1.60217663*1e-19
-        
-        E = (plank_constant*c_constant/e_constant)/(wavelength)
+        wavelengths = self._prepare_wavelengths(wavelengths)            # nm → validated
+        E = self._hc_over_e.to(self.dtype) / wavelengths                # eV   (real)
+        mask = E > self.Eg
 
-        
-        #Calculation of imaginary part of electric permittivity
-        if E > self.Eg:
-            epsilon_i = (1/E)*(self.A*self.E0*self.C*(E - self.Eg)**2)/((E**2 - self.E0**2)**2 + self.C**2*E**2)
-        else:
-            epsilon_i = 0
+        c_dtype = self._as_complex_dtype(self.dtype)
+        E     = E.to(c_dtype)
+        Eg    = self.Eg.to(c_dtype)
+        A     = self.A.to(c_dtype)
+        E0    = self.E0.to(c_dtype)
+        Gamma = self.Gamma.to(c_dtype)                                      
 
-        #Calculation of real part of electric permittivity
-        a_ln = (self.Eg**2 - self.E0**2)*(E**2) + (self.Eg**2)*(self.C**2) - (self.E0**2)*(self.E0**2 + 3*self.Eg**2)
-        a_atan = (E**2 - self.E0**2)*(self.E0**2 + self.Eg**2) + self.Eg**2*self.C**2
-        a_alpha = torch.sqrt(4*self.E0**2 - self.C**2)
-        a_gamma2 = (self.E0**2 - 0.5 * (self.C**2))
-        a_ksi4 = (E**2 - a_gamma2)**2 + 0.25 * a_alpha**2 * self.C**2
-        
-        epsilon_r1_1 = (self.A * self.C)/(torch.pi * a_ksi4)
-        epsilon_r1_2 = a_ln / (2 * a_alpha * self.E0)
-        epsilon_r1_3 = self.E0**2 + self.Eg**2 + a_alpha * self.Eg
-        epsilon_r1_4 = self.E0**2 + self.Eg**2 - a_alpha * self.Eg
-        epsilon_r1_5 = torch.log(epsilon_r1_3 / epsilon_r1_4)
-        
-        epsilon_r1 = epsilon_r1_1 * epsilon_r1_2 * epsilon_r1_5
-        
-        epsilon_r2_1 = - self.A / (torch.pi * a_ksi4)
-        epsilon_r2_2 = a_atan / self.E0
-        epsilon_r2_3 = (a_alpha + 2 * self.Eg) / self.C
-        epsilon_r2_4 = (a_alpha - 2 * self.Eg) / self.C
-        epsilon_r2_5 = torch.pi - torch.arctan(epsilon_r2_3) + torch.arctan(epsilon_r2_4)
-    
-        epsilon_r2 = epsilon_r2_1 * epsilon_r2_2 * epsilon_r2_5
-        
-        epsilon_r3_1 = (2 * self.A * self.E0)/(torch.pi * a_ksi4 * a_alpha)
-        epsilon_r3_2 = self.Eg * (E**2 - a_gamma2)
-        epsilon_r3_3 = 2 * (a_gamma2 - self.Eg**2) / (a_alpha * self.C)
-        epsilon_r3_4 = torch.pi + 2 * torch.arctan(epsilon_r3_3)
-        
-        epsilon_r3 = epsilon_r3_1 * epsilon_r3_2 * epsilon_r3_4
-        
-        epsilon_r4_1 = -(self.A * self.E0 * self.C) / (torch.pi * a_ksi4)
-        epsilon_r4_2 = (E**2 + self.Eg**2) / E
-        epsilon_r4_3 = torch.log(torch.abs(E - self.Eg) / (E + self.Eg))
-        epsilon_r4 = epsilon_r4_1 * epsilon_r4_2 * epsilon_r4_3
-        
-        epsilon_r5_1 = (2 * self.A * self.E0 * self.C * self.Eg) / (torch.pi * a_ksi4)
-        epsilon_r5_2 = torch.abs(E - self.Eg) * (E + self.Eg)
-        epsilon_r5_3 = torch.sqrt((self.E0**2 - self.Eg**2)**2 + self.Eg**2 * self.C**2)
-        epsilon_r5_4 = torch.log(epsilon_r5_2 / epsilon_r5_3)
-        epsilon_r5 = epsilon_r5_1 * epsilon_r5_4
-        
-        khi_r = epsilon_r1 + epsilon_r2 + epsilon_r3 + epsilon_r4 + epsilon_r5
-        epsilon_r = khi_r
+        # ---------- ε₂ (imaginary) ----------
+        epsilon_i = torch.where(
+            mask,
+            (A * E0 * Gamma * (E - Eg) ** 2)
+            / (E * ((E ** 2 - E0 ** 2) ** 2 + Gamma ** 2 * E ** 2)),
+            torch.zeros_like(E, dtype=c_dtype)
+        )
 
-        #Prevent NaN values apperance
-        epsilon_r[torch.isnan(epsilon_r)] = 0
-        epsilon_i[torch.isnan(epsilon_i)] = 0
-        
-        #Refractive index calculation
-        eps = epsilon_r + 1j * epsilon_i
+        # ---------- ε₁ (real) helpers ----------
+        a_ln     = (Eg**2 - E0**2) * E**2 + Eg**2 * Gamma**2 - E0**2 * (E0**2 + 3 * Eg**2)
+        a_atan   = (E**2 - E0**2) * (E0**2 + Eg**2) + Eg**2 * Gamma**2
+        a_alpha  = torch.sqrt(4 * E0**2 - Gamma**2)
+        a_gamma2 = E0**2 - 0.5 * Gamma**2
+        a_ksi4   = (E**2 - a_gamma2) ** 2 + 0.25 * a_alpha**2 * Gamma**2
 
-        return eps
+        # ---------- ε₁ contributions ----------
+        εr1 = (A * Gamma) / (torch.pi * a_ksi4) * \
+            (a_ln / (2 * a_alpha * E0)) * \
+            torch.log((E0**2 + Eg**2 + a_alpha * Eg) /
+                        (E0**2 + Eg**2 - a_alpha * Eg))
+
+        εr2 = (-A / (torch.pi * a_ksi4)) * \
+            (a_atan / E0) * \
+            (torch.pi - torch.atan((a_alpha + 2 * Eg) / Gamma)
+                        + torch.atan((a_alpha - 2 * Eg) / Gamma))
+
+        εr3 = (2 * A * E0) / (torch.pi * a_ksi4 * a_alpha) * \
+            (Eg * (E**2 - a_gamma2)) * \
+            (torch.pi + 2 * torch.atan(2 * (a_gamma2 - Eg**2) /
+                                        (a_alpha * Gamma)))
+
+        εr4 = (-A * E0 * Gamma) / (torch.pi * a_ksi4) * \
+            ((E**2 + Eg**2) / E) * \
+            torch.log(torch.abs(E - Eg) / (E + Eg))
+
+        εr5 = (2 * A * E0 * Gamma * Eg) / (torch.pi * a_ksi4) * \
+            torch.log(torch.abs(E - Eg) * (E + Eg) /
+                        torch.sqrt((E0**2 - Eg**2)**2 + Eg**2 * Gamma**2))
+
+        epsilon_r = εr1 + εr2 + εr3 + εr4 + εr5
+
+        # ---------- clean NaNs / infs ----------
+        epsilon_r = torch.nan_to_num(epsilon_r)
+        epsilon_i = torch.nan_to_num(epsilon_i)
+
+        return epsilon_r + 1j * epsilon_i
     
     def __repr__(self) -> str:
         """
@@ -436,5 +642,5 @@ class TaucLorentz(BaseDispersion):
             str: A string summarizing the TaucLorentz dispersion model with its parameters,
                  data type, and device.
         """
-        return (f"TaucLorentz Dispersion(Coefficients(Eg, A, E0, C):{[self.Eg, self.A, self.E0, self.C]}, dtype: {self.dtype}, device: {self.device})")
+        return (f"TaucLorentz Dispersion(Coefficients(Eg, A, E0, Gamma):{[self.Eg, self.A, self.E0, self.Gamma]})")
 

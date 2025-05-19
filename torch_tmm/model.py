@@ -3,72 +3,106 @@ from .layer import BaseLayer, LayerType
 from .t_matrix import T_matrix
 from .optical_calculator import OpticalCalculator
 import torch 
+import torch.nn as nn
 
-class Model:
+class Model(nn.Module):
     """
-    A Model for computing the optical response of a multilayer structure using the T-matrix formalism.
+    Transfer-matrix model of a multilayer stack.
 
-    This class encapsulates an optical model composed of three parts:
-      - An environment layer (env), representing the incident medium.
-      - A substrate layer (subs), representing the bottom medium.
-      - A list of intermediate layers (structure) that form the optical stack.
-    
-    The model computes the overall transfer matrices for s- and p-polarizations at given wavelengths
-    and angles, then packages the results into an OpticalProperties object.
+    The model owns exactly **one** environment layer (``layer_type='env'``),
+    **one** substrate layer (``'subs'``) and an ordered
+    :class:`~torch.nn.ModuleList` of intermediate layers
+    (typically ``'coh'``).  All children move automatically with
+    :py:meth:`~torch.nn.Module.to`.
 
-    Attributes:
-        dtype (torch.dtype): Data type for tensor computations.
-        device (torch.device): Device (e.g., CPU or GPU) for tensor computations.
-        T_matrix (T_matrix): An instance of the T_matrix class for computing interface and layer matrices.
-        env (BaseLayer): The environment layer (incident medium) with type 'env'.
-        structure (List[BaseLayer]): A list of layers (typically coherent layers) forming the optical stack.
-        subs (BaseLayer): The substrate layer (transmission medium) with type 'subs'.
+    Parameters
+    ----------
+    env : BaseLayer
+        Incident medium (must have ``layer_type='env'``).
+    structure : list[BaseLayer]
+        Finite stack between env and substrate (must *not* contain
+        ``'env'`` or ``'subs'`` layers).
+    subs : BaseLayer
+        Transmission medium (must have ``layer_type='subs'``).
+    dtype : torch.dtype, default ``torch.float32``
+        Either ``float32`` or ``float64``; determines the complex
+        precision internally (``complex64`` / ``complex128``).
+    device : torch.device, default ``cpu``
+        Where all tensors live initially.
     """
 
     def __init__(
-            self,
-            env: BaseLayer,
-            structure: List[BaseLayer],
-            subs: BaseLayer,
-            dtype: torch.dtype,
-            device: torch.device
+        self,
+        env: BaseLayer,
+        structure: list[BaseLayer],
+        subs: BaseLayer,
+        *,
+        dtype: torch.dtype = torch.float32,
+        device: torch.device = torch.device("cpu"),
     ) -> None:
-        """
-        Initialize the optical model with the environment, structure, and substrate layers.
+        super().__init__()
 
-        Args:
-            env (BaseLayer): The environment layer. Its type must be 'env'.
-            structure (List[BaseLayer]): A list of layers that form the optical stack.
-                These layers should not be of type 'env' or 'subs'.
-            subs (BaseLayer): The substrate layer. Its type must be 'subs'.
-            dtype (torch.dtype): Data type for tensor operations.
-            device (torch.device): Device on which tensor operations are performed.
-        
-        Raises:
-            AssertionError: If the env or subs layers do not have the correct types,
-                or if any layer in the structure has an invalid type.
-        """
-        self.dtype = dtype
-        if self.dtype == torch.complex64:
-            self.dtype_real = torch.float32
-        else:
-            self.dtype_real = torch.float64
+        # --------------------- validate dtype --------------------------------
+        if dtype not in (torch.float32, torch.float64):
+            raise TypeError(f"dtype must be float32 or float64, got {dtype!s}")
 
-        self.device = device
-        self.T_matrix = T_matrix(self.dtype, self.device)
+        # --------------------- validate layer roles --------------------------
+        if env.layer_type != "env":
+            raise ValueError("`env` layer must have layer_type='env'.")
+        if subs.layer_type != "subs":
+            raise ValueError("`subs` layer must have layer_type='subs'.")
+        for i, lyr in enumerate(structure, 1):
+            if lyr.layer_type in ("env", "subs"):
+                raise ValueError(
+                    f"structure[{i}] has invalid layer_type={lyr.layer_type!r}"
+                )
 
-        # Load the complete model components.
-        self.structure = structure
-        self.env = env
-        self.subs = subs
+        # --------------------- register children -----------------------------
+        self.env: BaseLayer = env
+        self.subs: BaseLayer = subs
+        self.structure = nn.ModuleList(structure)  # keeps order & registers
 
-        # The environment layer must be labeled 'env' and the substrate layer 'subs'.
-        assert self.env.type == 'env', 'The environment layer type is incorrect'
-        assert self.subs.type == 'subs', 'The substrate layer type is incorrect'
-        # Ensure no layer in the structure is an environment or substrate.
-        for i, layer in enumerate(self.structure):
-            assert layer.type != 'env', 'No environment layer should be in the structure'
-            assert layer.type != 'subs', 'The substrate layer should not be in the structure'
+        # --------------------- mirrors & helper objects ----------------------
+        self._dtype: torch.dtype = dtype
+        self._device: torch.device = device
+        self._c_dtype: torch.dtype = (
+            torch.complex64 if dtype == torch.float32 else torch.complex128
+        )
+        self.T_matrix = T_matrix(self._c_dtype, self._device)
+
+        # move everything to the requested dtype/device once
+        self.to(dtype=dtype, device=device)
+
+    # ----------------------------------------------------------------- API --
+    @property
+    def dtype(self) -> torch.dtype:
+        return self._dtype
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+
+    # ---------------------------------------------------------------- .to() --
+    def _sync_dtype_device(self) -> None:
+        """Refresh mirrors from the first parameter/buffer."""
+        try:
+            p = next(self.parameters())
+        except StopIteration:
+            try:
+                p = next(self.buffers())
+            except StopIteration:
+                return
+        self._dtype, self._device = p.dtype, p.device
+        self._c_dtype = (
+            torch.complex64 if self._dtype == torch.float32 else torch.complex128
+        )
+        # re-instantiate helper that caches dtype/device
+        self.T_matrix = T_matrix(self._c_dtype, self._device)
+
+    def _apply(self, fn):
+        out = super()._apply(fn)  # moves all parameters & buffers
+        self._sync_dtype_device()
+        return out
 
     def __repr__(self) -> str:
         """
@@ -90,87 +124,96 @@ class Model:
                 f"  Dtype: {self.dtype}, Device: {self.device}\n"
                 f")")
 
-    def evaluate(self, wavelengths: torch.Tensor, angles: torch.Tensor) -> OpticalCalculator:
+    # --------------------------------------------------------------------- forward
+    def forward(
+        self,
+        wavelengths: torch.Tensor,      # 1-D  (L,)
+        angles:      torch.Tensor,      # 1-D  (A,) in degrees
+    ) -> OpticalCalculator:
         """
-        Evaluate the optical properties of the model at given wavelengths and angles.
+        Compute optical response for every wavelength / angle pair.
 
-        This method computes the refractive indices for the environment and substrate,
-        and then calculates the transfer matrices for s- and p-polarizations across the complete structure.
-        The resulting transfer matrices, along with the refractive indices, are packaged into an OpticalProperties object.
-
-        Args:
-            wavelengths (torch.Tensor): A tensor of wavelengths at which to evaluate the model.
-            angles (torch.Tensor): A tensor of angles (in degree) of incidence.
-
-        Returns:
-            OpticalProperties: An object containing the s- and p-polarization transfer matrices,
-                               and the refractive indices of the environment and substrate.
+        Returns
+        -------
+        OpticalCalculator
+            Holds T-matrices for s & p polarisations and auxiliary indices.
         """
-        # unpack quantities and transfer to the correct device and data type
-        angles = torch.deg2rad(angles.to(self.dtype_real)).to(self.dtype).to(self.device)
-        wavelengths = wavelengths.to(self.dtype).to(self.device)
-        angles = angles.to(self.dtype).to(self.device)
-        n_env = self.env.material.refractive_index(wavelengths).to(self.dtype).to(self.device)
-        n_subs = self.subs.material.refractive_index(wavelengths).to(self.dtype).to(self.device)
-        n_air = torch.ones_like(n_env, dtype=self.dtype, device=self.device)
-        
-        # check for correct input shape 
-        assert wavelengths.ndim == 1, 'Wavelengths must be a 1D tensor'
-        assert angles.ndim == 1, 'Angles must be a 1D tensor'
-        assert n_env.ndim == 1, 'Refractive index of the environment must be a 1D tensor'
-        assert n_subs.ndim == 1, 'Refractive index of the substrate must be a 1D tensor'
-        assert wavelengths.shape[0] == n_env.shape[0], 'Wavelengths and refractive index of the environment must have the same length'
-        assert wavelengths.shape[0] == n_subs.shape[0], 'Wavelengths and refractive index of the substrate must have the same length'
-        
-        nx = n_env[:, None] * torch.sin(angles[None, :])
+        # ---------- normalise inputs ----------------------------------------
+        if wavelengths.ndim != 1 or angles.ndim != 1:
+            raise ValueError("wavelengths and angles must be 1-D tensors.")
 
-        # s-polarization
-        T_env_s = self.T_matrix.interface_s(n_env, n_air, nx)
-        T_structure_s = self.structure_matrix(wavelengths, angles, nx, pol='s')
-        T_subs_s = self.T_matrix.interface_s(n_air, n_subs, nx)
-        T_s = torch.einsum('...ij,...jk->...ik', T_env_s,
-                             torch.einsum('...ij,...jk->...ik', T_structure_s, T_subs_s))
+        wl = wavelengths.to(dtype=self.dtype, device=self.device)           # (L,)
+        th = torch.deg2rad(angles).to(dtype=self.dtype, device=self.device) # (A,)
 
-        # p-polarization
-        T_env_p = self.T_matrix.interface_p(n_env, n_air, nx)
-        T_structure_p = self.structure_matrix(wavelengths, angles, nx, pol='p')
-        T_subs_p = self.T_matrix.interface_p(n_air, n_subs, nx)
-        T_p = torch.einsum('...ij,...jk->...ik', T_env_p,
-                             torch.einsum('...ij,...jk->...ik', T_structure_p, T_subs_p))
+        # ---------- refractive indices --------------------------------------
+        n_env  = self.env.refractive_index(wl)             # (L,)
+        n_subs = self.subs.refractive_index(wl)            # (L,)
+        n_air  = torch.ones_like(n_env, dtype=self._c_dtype)
 
-        return OpticalCalculator(Tm_s=T_s, Tm_p=T_p, n_env=n_env, n_subs=n_subs, nx=nx)
+        # broadcast:  nx[l,a] = n_env[l] * sin(th[a])
+        nx = n_env[:, None] * torch.sin(th)[None, :]       # (L,A)
 
-    def structure_matrix(self, wavelengths: torch.Tensor, angles: torch.Tensor, nx: torch.Tensor, pol: str) -> torch.Tensor:
+        # ---------- s-polarisation ------------------------------------------
+        T_s = self._stack_transfer(wl, th, nx, pol="s", n_air=n_air,
+                                n_env=n_env, n_subs=n_subs)
+
+        # ---------- p-polarisation ------------------------------------------
+        T_p = self._stack_transfer(wl, th, nx, pol="p", n_air=n_air,
+                                n_env=n_env, n_subs=n_subs)
+
+        return OpticalCalculator(Tm_s=T_s, Tm_p=T_p,
+                                n_env=n_env, n_subs=n_subs, nx=nx)
+
+    # ----------------------------------------------------------------  helpers
+    def _stack_transfer(
+        self,
+        wl: torch.Tensor, th: torch.Tensor, nx: torch.Tensor,
+        *, pol: str,
+        n_air: torch.Tensor, n_env: torch.Tensor, n_subs: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Compute the overall transfer matrix for the layered structure.
+        Build full 2×2 transfer matrix for one polarisation.
 
-        The transfer matrix is computed by sequentially multiplying the individual
-        layer matrices. Each layer matrix is obtained by applying the coherent layer
-        formula from the T_matrix class for the specified polarization.
-
-        Args:
-            wavelengths (torch.Tensor): A tensor of wavelengths at which to compute the matrix.
-            angles (torch.Tensor): A tensor of angles (in radians) of incidence.
-            nx (torch.Tensor): The x-component of the wave vector, computed as n_env * sin(angle).
-            pol (str): Polarization, either 's' or 'p', specifying which interface formula to use.
-
-        Returns:
-            torch.Tensor: The overall transfer matrix for the structure.
+        Returns ``T[L,A,2,2]``.
         """
-        # Initialize the structure matrix as an identity matrix for each wavelength and angle.
-        T_structure = torch.eye(2, dtype=self.dtype, device=self.device)
-        T_structure = T_structure.unsqueeze(0).unsqueeze(0).repeat(wavelengths.shape[0], angles.shape[0], 1, 1)
+        # Interfaces: env ↔ air  (air is modelling the stack entrance)
+        T_env = (self.T_matrix.interface_s if pol == "s"
+                else self.T_matrix.interface_p)(n_env, n_air, nx)     # (L,A,2,2)
 
-        # Multiply the transfer matrix for each layer in the structure.
-        for i, layer in enumerate(self.structure):
-            #check input data shape and transform to correct data type and device 
-            d = layer.thickness.to(self.dtype_real).to(self.device)
-            n = layer.material.refractive_index(wavelengths).to(self.dtype).to(self.device)
-            assert n.ndim == 1, 'Refractive index must be a 1D tensor'
-            assert d.ndim == 0, 'Thickness must be a scalar tensor'
-            assert wavelengths.shape[0] == n.shape[0], 'Wavelengths and refractive index must have the same length'
-            
-            T_layer = self.T_matrix.coherent_layer(pol=pol, n=n, d=d, wavelengths=wavelengths, nx=nx)
-            T_structure = torch.einsum('...ij,...jk->...ik', T_structure, T_layer)
+        # Internal stack
+        T_stack = self._structure_matrix(wl, nx, pol)
 
-        return T_structure
+        # Exit interface: air ↔ substrate
+        T_subs = (self.T_matrix.interface_s if pol == "s"
+                else self.T_matrix.interface_p)(n_air, n_subs, nx)    # (L,A,2,2)
+
+        # total = T_env · T_stack · T_subs
+        return T_env @ T_stack @ T_subs                                # (L,A,2,2)
+
+    # ------------------------------------------------------------ structure mat
+    def _structure_matrix(
+        self,
+        wl: torch.Tensor,                # (L,)
+        nx: torch.Tensor,                # (L,A)
+        pol: str,
+    ) -> torch.Tensor:
+        """
+        Multiply coherent layers from top (env side) to bottom (subs).
+
+        Returns ``T[L,A,2,2]`` (identity if stack is empty).
+        """
+        L, A = wl.shape[0], nx.shape[1]
+        T_tot = torch.eye(2, dtype=self._c_dtype, device=self.device)\
+                .expand(L, A, 2, 2)                     # broadcasted identity
+
+        for layer in self.structure:                       # only 'coh' layers
+            d   = layer.thickness                          # scalar parameter
+            n_l = layer.refractive_index(wl)               # (L,)
+
+            # layer transfer matrix  → (L,A,2,2)
+            T_l = self.T_matrix.coherent_layer(
+                pol=pol, n=n_l, d=d, wavelengths=wl, nx=nx)
+
+            T_tot = T_tot @ T_l                            # batched matmul
+
+        return T_tot

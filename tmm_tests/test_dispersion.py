@@ -1,6 +1,101 @@
 import torch
+import copy
 import time
 from torch_tmm.dispersion import *
+
+
+from typing import List, Tuple, Callable
+
+def dispersion_sanity_test(
+        dispersion: BaseDispersion,
+        wavelengths: torch.Tensor,
+        *,
+        verbose: bool = False
+        ) -> bool:
+    """
+    Quick consistency check for any `BaseDispersion` subclass.
+
+    1.  Moves the model to float32 ⇒ expects ε, ñ in complex64.
+    2.  Moves the model to float64 ⇒ expects ε, ñ in complex128.
+    3.  Ensures Im{ε(λ)} and Im{ñ(λ)} are strictly positive
+        (causal passive medium).
+
+    Parameters
+    ----------
+    dispersion : BaseDispersion
+        Instance to be verified (will be **modified in-place**).
+    wavelengths : torch.Tensor
+        Positive wavelengths (same unit used by the model).
+    verbose : bool, default False
+        If True prints a numbered list and the first failing test.
+
+    Returns
+    -------
+    bool
+        True  → all checks passed  
+        False → at least one check failed
+    """
+
+    def _msg(ok: bool, label: str) -> str:          # helper for pretty print
+        mark = "✓" if ok else "✗"
+        return f"[{mark}] {label}"
+    
+    test_dispersion = copy.deepcopy(dispersion)
+
+    tests: List[Tuple[str, Callable[[], bool]]] = [
+        # --- float32 stage -------------------------------------------------
+        (
+            "move to float32",
+            lambda: test_dispersion.to(torch.float32).dtype is torch.float32,
+        ),
+        (
+            "ε dtype = complex64",
+            lambda: test_dispersion.epsilon(wavelengths).dtype is torch.complex64,
+        ),
+        (
+            "ñ dtype = complex64",
+            lambda: test_dispersion.refractive_index(wavelengths).dtype
+            is torch.complex64,
+        ),
+        # --- float64 stage -------------------------------------------------
+        (
+            "move to float64",
+            lambda: test_dispersion.to(torch.float64).dtype is torch.float64,
+        ),
+        (
+            "ε dtype = complex128",
+            lambda: test_dispersion.epsilon(wavelengths).dtype is torch.complex128,
+        ),
+        (
+            "ñ dtype = complex128",
+            lambda: test_dispersion.refractive_index(wavelengths).dtype
+            is torch.complex128,
+        ),
+        # --- causality / passivity check -----------------------------------
+        (
+            "Im{ε} >= 0",
+            lambda: torch.all(test_dispersion.epsilon(wavelengths).imag >= 0).item(),
+        ),
+        (
+            "Im{ñ} >= 0",
+            lambda: torch.all(test_dispersion.refractive_index(wavelengths).imag >= 0).item(),
+        ),
+    ]
+
+    all_ok = True
+    for i, (label, fn) in enumerate(tests, 1):
+        ok = bool(fn())
+        all_ok &= ok
+        if verbose:
+            print(f"{i:02d}. {_msg(ok, label)}")
+        if not ok and not verbose:
+            break                              # silent, exit early
+
+    # if not verbose:
+    #     print("All tests passed ✔️" if all_ok else "❌ Test failed")
+
+    return all_ok
+
 
 def flat_dispersion_test(epsilon: torch.nn.Parameter,
                          wavelengths : torch.Tensor,
