@@ -1,61 +1,121 @@
-# T_matrix: A PyTorch-based Transfer Matrix Method Library
+## TMM-PyTorch
 
-This repository implements the `T_matrix` class for computing transfer matrices in thin film optics using the Transfer Matrix Method (TMM). The module leverages PyTorch tensors to perform vectorized, high-performance computations on both CPU and GPU, and it is fully compatible with PyTorch's automatic differentiation (autograd).
+A PyTorch-based library for optical multilayer stacks simulation using the Transfer-Matrix Method (TMM). TMM-PyTorch combines complex-valued dispersion models, GPU acceleration, and PyTorch’s autograd to let you both **compute** reflectance/transmission spectra and **fit** layer or material parameters end-to-end.
+
+The framework is still under development and some functionality can be abscent. 
+---
 
 ## Key Features
 
-- **Vectorized Computation:** All methods operate on PyTorch tensors for efficient, batch-style calculations.
-- **GPU Support:** Run computations on GPU for accelerated performance.
-- **Autograd Compatibility:** Seamlessly integrate with PyTorch's autograd for gradient-based optimization.
-- **Modular Design:** 
-  - **coherent_layer:** Computes the overall transfer matrix for a single coherent layer (surrounded by air) over a range of wavelengths and angles.
-  - **interface_s:** Computes the interface matrix between two media for s-polarization.
-  - **interface_p:** Computes the interface matrix between two media for p-polarization.
-  - **propagation_coherent:** Computes the propagation transfer matrix through a layer.
+* **Modular Dispersion Models**
 
-## Conventions
+  * Abstract base class `BaseDispersion` plus built-in models: `ConstantEpsilon`, `Lorentz`, Cauchy, Tauc–Lorentz, etc.
+  * Easily extend by subclassing `BaseDispersion`.
 
-- **Propagation Direction:** Calculations assume propagation from left to right.
-- **Refractive Index:** Defined as `n_real + 1j * n_imm`.
-- **Units:** Wavelengths and thicknesses must be defined in the same units (e.g., m, nm, or µm).
-- **Angles:** Specified in degrees, in the range [0, 90).
+* **Materials & Layers**
 
-## Usage Guidelines
+  * `BaseMaterial` / `Material` aggregate dispersions.
+  * `BaseLayer` / `Layer` wrap materials + thickness + layer type (`coh`/`env`/`subs`).
+  * Public API:
 
-For cases involving high complex refractive indices or very thick layers, computational errors may occur when using `dtype=torch.complex64` or `dtype=torch.complex32`. In such cases, it is recommended to use `dtype=torch.complex128` for improved numerical stability.
+    ```python
+    eps = material.epsilon(wavelengths)      # complex ε(λ)
+    n   = layer.refractive_index(wavelengths)
+    ```
 
-## Example
+* **Full-stack Model**
 
-Below is a sample script demonstrating how to use the `T_matrix` class:
+  * `Model(env, structure, subs)` orchestrates:
+
+    1. Environment layer (incident medium, `env`).
+    2. Intermediate coherent layers (`structure`).
+    3. Substrate layer (transmission medium, `subs`).
+  * Computes transfer matrices for s/p polarizations over any wavelength × angle grid.
+
+* **GPU & Mixed Precision**
+
+  * Call `.to(device, dtype)` on any dispersion/material/layer/model:
+
+    ```python
+    model = model.to("cuda", dtype=torch.float64)
+    ```
+  * Real parameters stay `float32⇄float64`; outputs auto-promote to `complex64⇄complex128`.
+  * Works with PyTorch AMP and `torch.compile(model)` for additional speedups.
+
+* **End-to-End Differentiable**
+
+  * All thicknesses and dispersion parameters are `nn.Parameter`.
+  * Use standard PyTorch optimizers (Adam, SGD, etc.) to fit to measured spectra.
+
+---
+
+## Installation
+
+```bash
+pip install git+https://github.com/RodionovSA/torch_tmm.git
+```
+
+Requires **PyTorch 1.10+** (CPU or CUDA).
+
+---
+
+## Project Structure
+
+```
+torch_tmm/              # core package
+├── t_matrix.py         # T_matrix: interface & propagation kernels
+├── dispersion.py       # BaseDispersion + models (Constant, Lorentz, etc.)
+├── material.py         # BaseMaterial / Material classes
+├── layer.py            # BaseLayer / Layer classes
+└── model.py            # high-level Model (env+structure+subs)
+tests/                  # unit & sanity tests
+README.md               # this file
+```
+
+Exports:
 
 ```python
-from torch_tmm import Model, BaseLayer, BaseMaterial
-from torch_tmm.dispersion import Constant_epsilon
+from torch_tmm import (
+    T_matrix,
+    BaseDispersion, ConstantEpsilon, Lorentz, …,
+    BaseMaterial, Material,
+    BaseLayer, Layer,
+    Model,
+)
+```
+
+---
+
+## Quick Start
+
+```python
 import torch
+from torch_tmm import ConstantEpsilon, Material, Layer, Model
 
-# define the type and device used during the calculation
-dtype=torch.complex64
-device=torch.device('cpu')
+# 1D wavelength & angle arrays
+wls = torch.linspace(400, 800, 401)     # nm
+ths = torch.linspace(0, 80, 81)         # degrees
 
-# define wavelenghts and incidence angle
-wavelengths = torch.linspace(400, 800, 401)
-angles = torch.linspace(0, 89, 90)
+# Dispersion models
+disp_env   = ConstantEpsilon(1.0)       # air
+disp_film  = Lorentz(A=1.9, E0=3.2, Gamma=0.15)
+disp_subs  = ConstantEpsilon(2.5)       # substrate
 
-# define dispersions describing the materials used
-env_disp = [Constant_epsilon(1+0j, dtype, device)]
-layer_disp = [Constant_epsilon(3+0.2j, dtype=dtype, device=device)]
-subs_disp = [Constant_epsilon(5+0j, dtype, device)]
+# Materials
+env_mat   = Material([disp_env],   name="Air")
+film_mat  = Material([disp_film],  name="Film")
+subs_mat  = Material([disp_subs],  name="Substrate")
 
-# define materials to be simulated
-env_mat = BaseMaterial(env_disp,name = 'air',dtype= dtype,device= device)
-layer_mat = BaseMaterial(layer_disp,dtype= dtype,device= device)
-subs_mat = BaseMaterial(subs_disp,name = 'glass',dtype= dtype, device=device)
+# Layers
+env_layer  = Layer(env_mat,  layer_type="env")
+film_layer = Layer(film_mat, layer_type="coh",  thickness=500e-9)
+subs_layer = Layer(subs_mat, layer_type="subs")
 
-# define layers
-env = BaseLayer(env_mat, thickness=0, LayerType='env')
-layer = BaseLayer(layer_mat, thickness=torch.tensor(10,dtype=dtype, device=device), LayerType='coh')
-subs = BaseLayer(subs_mat, thickness=0, LayerType='subs')
+# Build model and move to GPU
+model = Model(env_layer, [film_layer], subs_layer)
+model = model.to("cuda", dtype=torch.float32)
 
-#define model and perform calculations
-model = Model(env, [layer], subs, dtype, device)
-results= model.evaluate(wavelengths, angles)
+# Compute s-polarization transmission
+results = model(wls.to(model.device), ths.to(model.device))
+```
+
