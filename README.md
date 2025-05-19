@@ -9,7 +9,7 @@ The framework is still under development and some functionality can be abscent.
 
 * **Modular Dispersion Models**
 
-  * Abstract base class `BaseDispersion` plus built-in models: `ConstantEpsilon`, `Lorentz`, Cauchy, Tauc–Lorentz, etc.
+  * Abstract base class `BaseDispersion` plus built-in models: `ConstantEpsilon`, `Lorentz`, `Cauchy`, `Tauc–Lorentz`, etc.
   * Easily extend by subclassing `BaseDispersion`.
 
 * **Materials & Layers**
@@ -119,3 +119,45 @@ model = model.to("cuda", dtype=torch.float32)
 results = model(wls.to(model.device), ths.to(model.device))
 ```
 
+---
+
+## Optimization Example
+
+```python
+import torch.nn as nn
+
+# Suppose T_target is your measured spectrum
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+criterion = nn.MSELoss()
+
+for epoch in range(100):
+    optimizer.zero_grad()
+    out = model(wls, ths).transmission("s")
+    loss = criterion(out, T_target)
+    loss.backward()
+    optimizer.step()
+    print(f"Epoch {epoch}: loss={loss.item():.4e}, film thickness={film_layer.thickness.item():.4e}")
+```
+
+---
+
+## GPU & Performance Tips
+
+* Use **`torch.compile(model)`** on PyTorch 2.0+ for JIT optimizations.
+* Employ **automatic mixed precision** (AMP) for faster kernels.
+* Ensure batched matmuls (`@`) drive throughput; avoid Python loops in hot paths.
+
+---
+
+## Contributing
+
+1. Fork & clone
+2. Create a feature branch
+3. Add tests under `tests/`
+4. Submit a pull request
+
+---
+
+## License
+
+This project is released under the **MIT License**. See `LICENSE` for details.
