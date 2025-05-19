@@ -1,3 +1,6 @@
 *.ipynb
 __pycache__/*
 plot.py
+torch_tmm/__pycache__/*
+tmm_tests/__pycache__/*
+.DS_Store
