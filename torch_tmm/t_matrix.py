@@ -1,4 +1,11 @@
 """
+Authors:
+    Sergei Rodionov, Daniele Veraldi
+Date:
+    2025-06-09
+License:
+    MIT, Open Source
+
 ================================================================================
 Module: t_matrix.py
 ================================================================================
@@ -6,14 +13,45 @@ Description:
     This module implements the T_matrix class for computing the transfer matrix in 
     thin film optics using the Transfer Matrix Method (TMM). The T_matrix class 
     provides methods to calculate the transfer matrix for a coherent layer,incoherent layer,
-    and interfaces as well as for propagation inside a layer.
+    and interfaces as well as for propagation inside a layer. All layers are homogeneous and 
+    isotropic. 
+
+    All theoretical foundations and mathematical details of the implemented methods 
+    are thoroughly discussed in the following references:
+
+    - Mitsas, C. L., & Siapkas, D. I. (1995). Applied Optics, 34(10), 1678–1683. 
+
+    - Troparevsky, M. C., et al. (2010). Optics Express, 18(24), 24715–24721. 
+
+    - Byrnes, S. J. (2016). Multilayer optical calculations. arXiv preprint arXiv:1603.02720. 
+
+    - Katsidis, C. C., & Siapkas, D. I. (2002). Applied Optics, 41(19), 3978–3987. 
+
+    In the current implementation, each coherent layer is treated independently from the others 
+    by introducing infinitesimally small air gaps between them. As a result, each layer is effectively 
+    surrounded by air, allowing its T-matrix to be computed in isolation. The environmental (top) 
+    and substrate (bottom) interfaces are added only at the final stage. While this approach simplifies 
+    certain computations, it introduces unnecessary interface calculations that may lead to error accumulation. 
+    **This design choice is subject to revision in future versions.**
+
+    Matrix mutliplication procedure is implemented in model.py
+
+    The implementation leverages a normalized wave-vector component (`nx`), 
+    perpendicular to the layer boundaries, instead of directly using the angle of incidence. 
+    This approach avoids dealing explicitly with complex-valued angles, 
+    particularly beneficial for scenarios involving total internal reflection. 
+    `nx` is computed once and consistently reused throughout the computation pipeline, 
+    enhancing both numerical stability and computational efficiency.
+
+    Additionally, PyTorch’s square root operation is defined such that the imaginary part of the result 
+    is always non-negative, which helps avoid branch cut ambiguities.
 
     The methods in this module operate in a vectorized manner using 
     PyTorch tensors, which facilitates high-performance computations on both CPU 
     and GPU devices and compatible with automatic differentiation (autograd).
 
 Key Components:
-    - coherent_layer: Computes the overall transfer matrix for a single coherent 
+    - coherent_layer: Computes the transfer matrix for a single coherent 
       layer surrounded by air over all wavelengths and angles.
     - interface_s: Computes the interface matrix between two media for s-polarization.
     - interface_p: Computes the interface matrix between two media for p-polarization.
@@ -22,12 +60,13 @@ Key Components:
 Conventions:
     - propagation from left to right
     - refractive index defined as n_real + 1j*n_imm 
-    - wavelenghts and thicknesses must be defined in the same units [m, or nm, or um] 
+    - wavelenghts and thicknesses must be defined in nm
     - angles defined in degree in range [0, 90)
 
 Usage:
-    - for high complex refractive index or very thick layers computational errors can arise when using dtype = torch.complex64 or dtype = torch.complex32. 
-      In those cases is recommended to use dtype = torch.complex128
+    - in the case of very high absorption (alpha > 60) or total internal reflection 
+    (nz purely imaginary) computational errors can arise. To avoid this we implement 
+    the clamp-and-split trick threshold to avoid numerical instability. 
 
 
 Example:
@@ -42,13 +81,6 @@ Example:
     >>> nx = n * torch.sin(incidence_angle)
     >>> T = tm.coherent_layer('s', n, d, wavelengths, nx)
     >>> print(T)
-
-Author:
-    Daniele Veraldi, Sergei Rodionov
-Date:
-    2025-02-19
-License:
-    MIT, Open Source
 ================================================================================
 """
 
@@ -75,39 +107,44 @@ class T_matrix:
                     n: torch.Tensor, 
                     d: torch.Tensor, 
                     wavelengths: torch.Tensor, 
-                    nx: torch.Tensor) -> torch.Tensor:
+                    nx: torch.Tensor,
+                    *,
+                    clamp_alpha: float = 60.0,
+                    ) -> torch.Tensor:
         """
-        Computes the total transfer matrix for a single coherent layer surrounded by air 
-        over all wavelengths and angles in parallel.
+        Computes the Transfer matrix for a single coherent layer surrounded by air 
+        over all wavelengths and angles in parallel.  
 
         Parameters
         ----------
         n : torch.Tensor
             Refractive index of the layer. Shape: (num_wavelengths,)
         d : torch.Tensor
-            Thickness of the layer. Must be broadcastable to n_i. 
+            Thickness of the layer. Must be broadcastable to n. 
         nx : torch.Tensor
-            Transversal component of the k-vector normalized by k0. Shape: (num_wavelengths, num_angles)
+            Transversal component of the k-vector normalized by k0. 
+            Shape: (num_wavelengths, num_angles)
         Returns
         -------
         torch.Tensor
-            Overall transfer matrix of shape (num_wavelengths, num_angles, 2, 2).
+            Transfer matrix of shape (num_wavelengths, num_angles, 2, 2).
         """
         n_air = torch.ones_like(n)
         if pol == 's':
             T_in = self.interface_s(n_air, n, nx)
-            T_prop = self.propagation_coherent(n, d, wavelengths, nx)
+            T_prop = self.propagation_coherent(n, d, wavelengths, nx, clamp_alpha = clamp_alpha)
             T_out = self.interface_s(n, n_air, nx)
-            return torch.einsum('...ij,...jk->...ik', T_in, torch.einsum('...ij,...jk->...ik', T_prop, T_out ))
+            return T_in @ T_prop @ T_out
          
         elif pol == 'p':
             T_in = self.interface_p(n_air, n, nx)
-            T_prop = self.propagation_coherent(n, d, wavelengths, nx)
+            T_prop = self.propagation_coherent(n, d, wavelengths, nx, clamp_alpha = clamp_alpha)
             T_out = self.interface_p(n, n_air, nx)
-            return torch.einsum('...ij,...jk->...ik', T_in, torch.einsum('...ij,...jk->...ik', T_prop, T_out ))
+            return T_in @ T_prop @ T_out
         
         else:
             raise ValueError(f"Invalid polarization: {pol}")
+        
 
     def interface_s(self, 
                     ni: torch.Tensor, 
@@ -124,15 +161,17 @@ class T_matrix:
         nf : torch.Tensor
             Refractive index of next layer. Same shape as ni
         nx : torch
-            Transversal component of the k-vector normalized by k0. Shape: (num_wavelengths, num_angles)
+            Transversal component of the k-vector normalized by k0. 
+            Shape: (num_wavelengths, num_angles)
 
         Returns
         -------
         torch.Tensor
             Interface matrices of shape (num_wavelengths, num_angles, 2, 2)
         """
-        niz = torch.sqrt(ni[:,None]**2 - nx**2) 
-        nfz = torch.sqrt(nf[:,None]**2 - nx**2) 
+        # Getting propagation constants
+        niz = torch.sqrt(ni[:,None]**2 - nx**2)
+        nfz = torch.sqrt(nf[:,None]**2 - nx**2)
 
         T = torch.zeros(niz.shape + (2, 2), dtype=self.dtype, device=self.device)
         # Compute T matrix
@@ -158,13 +197,15 @@ class T_matrix:
         nf : torch.Tensor
             Refractive index of next layer. Same shape as ni
         nx : torch
-            Transversal component of the k-vector normalized by k0. Shape: (num_wavelengths, num_angles)
+            Transversal component of the k-vector normalized by k0. 
+            Shape: (num_wavelengths, num_angles)
 
         Returns
         -------
         torch.Tensor
             Interface matrices of shape (num_wavelengths, num_angles, 2, 2)
         """
+        # Getting propagation constants
         niz = torch.sqrt(ni[:,None]**2 - nx**2)
         nfz = torch.sqrt(nf[:,None]**2 - nx**2)
 
@@ -182,9 +223,12 @@ class T_matrix:
                     ni: torch.Tensor, 
                     d: torch.Tensor, 
                     wavelengths: torch.Tensor, 
-                    nx: torch.Tensor) -> torch.Tensor:
+                    nx: torch.Tensor,
+                    *,
+                    clamp_alpha: float = 60.0
+                    ) -> torch.Tensor:
         """
-        Computes the propagation transfer matrix for through a layer,
+        Computes the propagation transfer matrix for a layer,
         in parallel for all wavelengths and angles.
 
         Parameters
@@ -196,18 +240,39 @@ class T_matrix:
         wavelengths : torch.Tensor
             Wavelength of light. Shape: (num_wavelengths,)
         nx : torch  
-            Transversal component of the k-vector normalized by k0. Shape: (num_wavelengths, num_angles)
+            Transversal component of the k-vector normalized by k0. 
+            Shape: (num_wavelengths, num_angles)
+        clamp_alpha: float
+            Setup the clamp-and-split trick threshold to avoid numerical 
+            instability, when dealing with high absorption. 
 
         Returns
         -------
         torch.Tensor
             Propagation matrices of shape (num_wavelengths, num_angles, 2, 2)
         """
-        niz = torch.sqrt(ni[:,None]**2 - nx**2)
-        delta_i = (2 * np.pi / wavelengths[:,None]) * niz * d
+        # Getting propagation constant
+        niz = torch.sqrt(ni[:, None]**2 - nx**2)           # complex kz / k0
 
-        T = torch.zeros(delta_i.shape + (2, 2), dtype=self.dtype, device=self.device)
-        T[..., 0, 0] = torch.exp(-1j*delta_i)
-        T[..., 1, 1] = torch.exp(1j*delta_i)
+        #Get delta
+        k0     = 2 * torch.pi / wavelengths[:, None]       # real (λ,1)
+        delta  = k0 * d * niz                              # complex (λ,θ)
+        
+        #Clamp-and-split trick to fix absorption anomalies
+        beta   = delta.real                                # phase term  β
+        alpha  = delta.imag.clamp(max=clamp_alpha)   # decay term  α ≥ 0 
 
+        #Reassemble delta
+        delta = beta + 1j*alpha
+
+        #Get matrix components
+        exp_fwd  = torch.exp(-1j*delta)                    # e^{α - iβ}
+        exp_back = torch.exp(1j*delta)                       # e^{-α + iβ}
+
+        # --- assemble 2×2 matrices ---------------------------------------------
+        T = torch.zeros(delta.shape + (2, 2),
+                        dtype=exp_fwd.dtype,
+                        device=exp_fwd.device)
+        T[..., 0, 0] = exp_fwd
+        T[..., 1, 1] = exp_back
         return T

@@ -1,3 +1,46 @@
+"""
+Authors:
+    Sergei Rodionov, Daniele Veraldi
+Date:
+    2025-06-09
+License:
+    MIT, Open Source
+
+================================================================================
+Module: dispersion.py
+================================================================================
+Description:
+    This module defines dispersion models for simulating the optical 
+    response of materials. Each dispersion model implements wavelength-dependent 
+    complex permittivity ε(λ) and refractive index ñ(λ).
+
+    The dispersion models support automatic differentiation, device/dtype management, 
+    and composability within broader optical simulation frameworks.
+
+Key Components:
+    - `BaseDispersion`       : Abstract base class for dispersion models
+    - `Constant_epsilon`     : Constant (wavelength-independent) dielectric permittivity
+    - `Lorentz`              : Classical Lorentz oscillator model
+    - `Cauchy`               : Polynomial model for transparent materials (real + imaginary parts)
+    - `TaucLorentz`          : Amorphous semiconductor model combining Lorentz and bandgap behavior
+
+Conventions:
+    - Wavelengths are assumed to be in nanometers (nm)
+    - All models operate on `torch.Tensor` inputs with support for batched evaluation
+    - All parameters are `torch.nn.Parameter`, enabling learnable optical models
+    - Gradient support is maintained for inverse design and optimization
+    
+Example:
+    >>> import torch
+    >>> from torch_tmm import Dispersion
+    >>> wvl = torch.linspace(400, 800, 801)
+    >>> #Define dispersions
+    >>> const_eps = Dispersion.Constant_epsilon(1)
+    >>> lorentz = Dispersion.Lorentz(A=80, E0=0.845, Gamma=0.1)
+    >>> epsilon = const_eps.epsilon(wvl) + lorentz.epsilon(wvl)
+================================================================================
+"""
+
 from typing import List, Tuple, Union
 from abc import ABC, abstractmethod
 import torch 
@@ -213,8 +256,7 @@ class Constant_epsilon(BaseDispersion):
         Parameters
         ----------
         wavelengths : torch.Tensor
-            Wavelengths in **nanometres** at which the refractive index is
-            requested. Must be a positive, floating tensor.
+            Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns
         -------
@@ -231,8 +273,7 @@ class Constant_epsilon(BaseDispersion):
         Parameters
         ----------
         wavelengths : torch.Tensor
-            Wavelengths in **nanometres** (positive, floating tensor).  The
-            values are used only for broadcasting, not for computation.
+            Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns
         -------
@@ -266,7 +307,6 @@ class Lorentz(BaseDispersion):
     This class computes the electric permittivity and refractive index based on the Lorentz oscillator model.
     
     Attributes:
-        wavelengths (torch.Tensor): Tensor of wavelengths (in nanometers) at which the dispersion properties are evaluated.
         A (torch.nn.Parameter): Oscillator amplitude, eV**2.
         E0 (torch.nn.Parameter): Resonance energy, eV.
         C (torch.nn.Parameter): Damping coefficient, eV.
@@ -313,7 +353,7 @@ class Lorentz(BaseDispersion):
         Parameters
         ----------
         wavelengths : torch.Tensor
-            Positive, floating-point tensor of wavelengths **in nanometres**.
+            Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns
         -------
@@ -325,8 +365,8 @@ class Lorentz(BaseDispersion):
     
     def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
-        Compute the complex electric permittivity using the Lorentz oscillator model.
-        The electric permittivity ε is computed using the formula:
+        Compute the complex dielectric permittivity **ε(λ)** using the Lorentz oscillator model.
+        The electric permittivity **ε(λ)** is computed using the formula:
             ε = A / (E0^2 - E^2 - i * Gamma * E)
         where E is the photon energy calculated as:
             E = (h * c / e) / (wavelengths)  
@@ -334,11 +374,17 @@ class Lorentz(BaseDispersion):
             - h (Planck constant): 6.62607015e-34 J·s
             - c (Speed of light): 299792458 m/s
             - e (Elementary charge): 1.60217663e-19 C 
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).  
+
+        Returns
+        -------
+        torch.Tensor
+           The computed complex electric permittivity.
         
-        Args:
-            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) at which to compute the permittivity.
-        Returns:
-            torch.Tensor: The computed complex electric permittivity.
         """
         wavelengths = self._prepare_wavelengths(wavelengths)
         E = self._hc_over_e.to(self.dtype) / wavelengths
@@ -422,7 +468,7 @@ class Cauchy(BaseDispersion):
         Parameters
         ----------
         wavelengths : torch.Tensor
-            Positive wavelengths **in nanometres**.
+            Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns
         -------
@@ -456,10 +502,7 @@ class Cauchy(BaseDispersion):
         Parameters
         ----------
         wavelengths : torch.Tensor
-            Positive, floating-point tensor of wavelengths **in nanometres**
-            at which the permittivity is required.  The tensor may have any
-            shape; the result will have the same shape, device, and complex
-            precision.
+           Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns
         -------
@@ -537,7 +580,8 @@ class TaucLorentz(BaseDispersion):
         Compute the complex refractive index at the given wavelengths.
 
         Args:
-            wavelength (torch.Tensor): Tensor of wavelengths (in nanometers) for evaluation.
+            wavelengths : torch.Tensor
+           Wavelengths in **nanometres** (positive, floating tensor).  
         Returns:
             torch.Tensor: Complex refractive index evaluated at the specified wavelengths.
         """
@@ -571,7 +615,8 @@ class TaucLorentz(BaseDispersion):
             ε = ε_r + i * ε_i
 
         Args:
-            wavelengths (torch.Tensor): Tensor of wavelengths (meters) for evaluation.
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).  
         Returns:
             torch.Tensor: Complex dielectric function evaluated at the specified wavelengths.
         """

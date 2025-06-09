@@ -1,8 +1,49 @@
+"""
+Authors:
+    Sergei Rodionov, Daniele Veraldi
+Date:
+    2025-06-09
+License:
+    MIT, Open Source
+
+================================================================================
+Module: material.py
+================================================================================
+Description:
+    This module defines the base classes and implementations for optical materials 
+    used in multilayer simulations. Materials are constructed from one or more 
+    dispersion models that describe the wavelength-dependent complex permittivity ε(λ). 
+
+    Each material can be evaluated at arbitrary wavelengths to provide its dielectric 
+    response, either as permittivity or as a refractive index ñ(λ) = √ε(λ), and supports 
+    automatic differentiation for optimization workflows.
+
+Key Components:
+    - `BaseMaterial`: Abstract base class that defines the interface for material models.
+    - `Material`: Concrete implementation that aggregates multiple dispersion models.
+
+Conventions:
+    - Dispersion models must implement an `epsilon()` method returning complex permittivity.
+    - Units are assumed consistent across wavelength and dispersion models.
+    - Materials automatically track device and dtype for compatibility with PyTorch operations.
+    - Wavelengths are assumed to be in nanometers (nm)
+    
+    
+Example:
+    >>> import torch
+    >>> from torch_tmm import Dispersion, Material
+    >>> #Define materials
+    >>> subs_mat = Material([Dispersion.Constant_epsilon(1)], name='Air')
+    >>> env_mat = Material([Dispersion.Constant_epsilon(1.46**2)], name='Fused-silica')
+    >>> metal_mat = Material([Dispersion.Lorentz(A=80, E0=0.845, Gamma=0.1),
+                        Dispersion.Constant_epsilon(1)], name='Metal')
+================================================================================
+"""
+
 import torch
 import torch.nn as nn
 from typing import List
 from abc import ABC, abstractmethod
-
 from .dispersion import BaseDispersion
 
 
@@ -158,7 +199,8 @@ class Material(BaseMaterial):
         is performed element-wise over a tensor that spans the specified number of wavelengths.
 
         Parameters:
-            wavelengths: torch.Tensor. 
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns:
             torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 
@@ -180,7 +222,8 @@ class Material(BaseMaterial):
         This method calculates the material's refractive index.
 
         Parameters:
-            wavelengths: torch.Tensor.
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).  
 
         Returns:
             torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 

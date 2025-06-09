@@ -1,3 +1,60 @@
+"""
+Authors:
+    Sergei Rodionov, Daniele Veraldi
+Date:
+    2025-06-09
+License:
+    MIT, Open Source
+
+================================================================================
+Module: model.py
+================================================================================
+Description:
+    This module defines the optical model used for simulation. It collects all layers, 
+    wavelengths, and angles, and computes the corresponding T-matrices for both in-plane (p-polarized) 
+    and out-of-plane (s-polarized) light. The result is an instance of an optical calculator that enables 
+    the evaluation of various optical quantities (transmission, reflection, ...).
+
+Key Components:
+    - `Model`: main simulation object encapsulating structure, environment, and substrate.
+    - `forward`: computes T-matrices across input wavelengths and angles.
+    - `T_matrix`: utility class that computes interface and layer matrices.
+    - `OpticalCalculator`: wrapper for downstream optical computations.
+
+Conventions:
+    - Optical wave propagates left to right (from environment to substrate).
+    - Wavelengths and layer thicknesses must be specified in nanometers (nm).
+    - Incident angles are in degrees and must be in the range [0°, 90°).
+    
+Example:
+    >>> import torch
+    >>> from torch_tmm import Dispersion, Material, Model, Layer
+    >>> #Define dtype and device
+    >>> dtype = torch.float32
+    >>> device = torch.device('cpu')
+    >>> #Define wavelengths (nm) and angles (deg)
+    >>> wavelengths = torch.linspace(400, 800, 801)
+    >>> angles = torch.linspace(0, 89, 357)
+    >>> #Define materials
+    >>> subs_mat = Material([Dispersion.Constant_epsilon(1)], name='Air')
+    >>> env_mat = Material([Dispersion.Constant_epsilon(1.46**2)], name='Fused-silica')
+    >>> metal_mat = Material([Dispersion.Lorentz(A=80, E0=0.845, Gamma=0.1),
+                        Dispersion.Constant_epsilon(1)], name='Metal')
+    >>> #Define layers
+    >>> env = Layer(env_mat, layer_type='semi-inf')
+    >>> subs = Layer(subs_mat, layer_type='semi-inf')
+    >>> metal = Layer(metal_mat, layer_type='coh', thickness=25) #nm
+    >>> #Define model
+    >>> optical_model = Model(env=env, structure=[metal], subs=subs,
+                                    dtype=dtype, device=device)
+    >>> calc = optical_model(wavelengths, angles)
+    >>> Rs = calc.reflection('s')
+    >>> Rp = calc.reflection('p')
+    >>> Ts = calc.transmission('s')
+    >>> Tp = calc.transmission('p')
+================================================================================
+"""
+
 from typing import List, Tuple, Literal
 from .layer import BaseLayer, LayerType
 from .t_matrix import T_matrix
@@ -47,12 +104,12 @@ class Model(nn.Module):
             raise TypeError(f"dtype must be float32 or float64, got {dtype!s}")
 
         # --------------------- validate layer roles --------------------------
-        if env.layer_type != "env":
-            raise ValueError("`env` layer must have layer_type='env'.")
-        if subs.layer_type != "subs":
-            raise ValueError("`subs` layer must have layer_type='subs'.")
+        if env.layer_type != "semi-inf":
+            raise ValueError("`env` layer must have layer_type='semi-inf'.")
+        if subs.layer_type != "semi-inf":
+            raise ValueError("`subs` layer must have layer_type='semi-inf'.")
         for i, lyr in enumerate(structure, 1):
-            if lyr.layer_type in ("env", "subs"):
+            if lyr.layer_type in ("semi-inf"):
                 raise ValueError(
                     f"structure[{i}] has invalid layer_type={lyr.layer_type!r}"
                 )
@@ -133,6 +190,13 @@ class Model(nn.Module):
         """
         Compute optical response for every wavelength / angle pair.
 
+        Parameters:
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor). 
+
+            angles : torch.Tensor
+            Angles in **degreed** (positive, floating tensor). 
+
         Returns
         -------
         OpticalCalculator
@@ -150,7 +214,6 @@ class Model(nn.Module):
         n_subs = self.subs.refractive_index(wl)            # (L,)
         n_air  = torch.ones_like(n_env, dtype=self._c_dtype)
 
-        # broadcast:  nx[l,a] = n_env[l] * sin(th[a])
         nx = n_env[:, None] * torch.sin(th)[None, :]       # (L,A)
 
         # ---------- s-polarisation ------------------------------------------

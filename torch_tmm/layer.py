@@ -1,13 +1,57 @@
-from __future__ import annotations
+"""
+Authors:
+    Sergei Rodionov, Daniele Veraldi
+Date:
+    2025-06-09
+License:
+    MIT, Open Source
 
+================================================================================
+Module: layer.py
+================================================================================
+Description:
+    This module defines the data structures used to describe individual optical layers 
+    in a multilayer stack. Each layer wraps an optical material and defines how the 
+    material is spatially arranged—either as a finite-thickness film or a 
+    semi-infinite medium (environment or substrate).
+
+    Layers expose a unified interface to compute complex permittivity ε(λ) and 
+    refractive index ñ(λ) for use in transfer matrix calculations.
+
+Key Components:
+    - `BaseLayer`: Abstract base class for all layers. Defines the optical interface.
+    - `Layer`: Concrete implementation for coherent and semi-infinite layers.
+      Associates a material model with a thickness and layer type.
+
+Conventions:
+    - Coherent layers (`'coh'`) must define a non-negative thickness.
+    - Semi-infinite layers (`'semi-inf'`) must omit the thickness.
+    - Thickness units must be consistent across layers (nm or meters).
+    - All tensors will inherit `dtype` and `device` from the associated material.
+    
+Example:
+    >>> import torch
+    >>> from torch_tmm import Dispersion, Material, Layer
+    >>> #Define materials
+    >>> subs_mat = Material([Dispersion.Constant_epsilon(1)], name='Air')
+    >>> env_mat = Material([Dispersion.Constant_epsilon(1.46**2)], name='Fused-silica')
+    >>> metal_mat = Material([Dispersion.Lorentz(A=80, E0=0.845, Gamma=0.1),
+                        Dispersion.Constant_epsilon(1)], name='Metal')
+    >>> #Define layers
+    >>> env = Layer(env_mat, layer_type='semi-inf')
+    >>> subs = Layer(subs_mat, layer_type='semi-inf')
+    >>> metal = Layer(metal_mat, layer_type='coh', thickness=25) #nm
+================================================================================
+"""
+
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Literal, Iterable
 import torch
 import torch.nn as nn
-
 from .material import BaseMaterial                                             
 
-LayerType = Literal["coh", "subs", "env"]     # “coherent”, “substrate”, “environment”
+LayerType = Literal["coh", "semi-inf"]     # “coherent”, “semi-infinite”
 
 class BaseLayer(nn.Module, ABC):
     """
@@ -31,10 +75,20 @@ class BaseLayer(nn.Module, ABC):
         *Shape*: ``(..., len(wavelengths))``.  The method **must** accept
         inputs on any device / dtype that the layer (and its sub-modules)
         currently live on.
+
+        Parameters:
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor). 
         """
 
     def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
-        """ñ(λ) = √ε(λ)."""
+        """
+        ñ(λ) = √ε(λ)
+
+        Parameters:
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor). 
+        """
         return torch.sqrt(self.epsilon(wavelengths))
 
     # ---------- convenience mirrors --------------------------------------
@@ -62,7 +116,7 @@ class BaseLayer(nn.Module, ABC):
 
 class Layer(BaseLayer):
     """
-    Standard thin-film layer: *material* + scalar *thickness*.
+    Standard thin-film or semi-infinite layer: *material* + scalar *thickness*.
 
     Parameters
     ----------
@@ -70,10 +124,9 @@ class Layer(BaseLayer):
         The optical material that furnishes ε(λ).
     thickness : float | torch.Tensor
         Physical thickness (meters or nm –  stick to *one* unit system).
-    layer_type : {"coh", "subs", "env"}
+    layer_type : {"coh", "semi-inf"}
         "coh"  – finite, coherently-interfering layer  
-        "subs" – semi-infinite substrate  
-        "env"  – ambient environment
+        "semi-inf" – semi-infinite substrate  
     requires_grad : bool, default ``False``
         If ``True`` the thickness becomes an optimisable parameter.
     """
@@ -90,9 +143,9 @@ class Layer(BaseLayer):
         super().__init__(name=name)
         self.material = material      
 
-        if layer_type not in ('coh', 'env', 'subs'):
+        if layer_type not in ('coh', 'semi-inf'):
             raise ValueError(
-                f"layer_type must be 'coh', 'subs', or 'env', got {layer_type!r}"
+                f"layer_type must be 'coh', or 'semi-inf', got {layer_type!r}"
             )
         self.layer_type: LayerType = layer_type
 
@@ -101,11 +154,11 @@ class Layer(BaseLayer):
             if thickness is None:
                 raise ValueError("A coherent layer must have a thickness.")
             t = torch.as_tensor(thickness, dtype=material.dtype, device=material.device)
-            if t.numel() != 1 or (t <= 0).any():
-                raise ValueError("Thickness must be a positive scalar.")
+            if t.numel() != 1 or (t < 0).any():
+                raise ValueError("Thickness must be a non-negative scalar.")
             self.thickness = nn.Parameter(t, requires_grad=requires_grad)
 
-        else:  # "subs" or "env"
+        else:  # "semi-inf"
             if thickness is not None:
                 raise ValueError(f'"{layer_type}" layer must not specify thickness.')
             # store a *buffer* just so dtype/device are easy to query
@@ -116,7 +169,12 @@ class Layer(BaseLayer):
 
         
 
-    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:         
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor: 
+        """
+        Parameters:
+            wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor). 
+        """        
         return self.material.epsilon(wavelengths)
 
     def __repr__(self) -> str:

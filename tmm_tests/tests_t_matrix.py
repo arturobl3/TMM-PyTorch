@@ -3,6 +3,111 @@ import numpy as np
 import time
 from torch_tmm.t_matrix import T_matrix
 
+def run_comprehensive_prop_test(device=torch.device('cpu')):
+    wavelengths = torch.linspace(400, 800, 401)
+    angles = torch.linspace(0, 89, 90)
+
+    dtype = torch.complex64
+
+    #First prop test (n_env = 1 and n_layer = 1)
+    n_env = 1*torch.ones_like(wavelengths)
+    n_layer = 1*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(30)
+
+    test_prop1 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=dtype, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop1:
+        raise ValueError('Failed test_prop1')
+    
+    #second prop test (n_env = 1 and n_layer = 3 + 1j)
+    n_env = 1*torch.ones_like(wavelengths)
+    n_layer = (3 + 1j)*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(10)
+
+    test_prop2 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=dtype, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop2:
+        raise ValueError('Failed test_prop2')
+    
+    #third prop test (n_env = 3 + 1j and n_layer = 1)
+    n_env = (3 + 1j)*torch.ones_like(wavelengths)
+    n_layer = 1*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(50)
+
+    test_prop3 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=dtype, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop3:
+        raise ValueError('Failed test_prop3')
+    
+    #Fourth prop test (n_env = 3 + 1j and n_layer = 4 + 8j)
+    n_env = (3 + 1j)*torch.ones_like(wavelengths)
+    n_layer = (4 + 8j)*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(50)
+
+    test_prop4 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=dtype, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop4:
+        raise ValueError('Failed test_prop4')
+    
+    #Fifth prop test (alpha > 60)
+    n_env = 1*torch.ones_like(wavelengths)
+    n_layer = (3 + 1j)*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(6000000)
+
+    test_prop5 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=dtype, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop5:
+        raise ValueError('Failed test_prop5')
+    
+    #Sixth prop test (n_env = 3 + 1j and n_layer = 1, d = 20000, complex128)
+    n_env = (3 + 1j)*torch.ones_like(wavelengths)
+    n_layer = 1*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(20000)
+
+    test_prop6 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=torch.complex128, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop6:
+        raise ValueError('Failed test_prop6')
+    
+    #seventh prop test (n_env = 4 + 2j and n_layer = (0.1 + 5j), d = 10000, complex128)
+    n_env = (4 + 2j)*torch.ones_like(wavelengths)
+    n_layer = (0.1 + 5j)*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(10000)
+
+    test_prop7 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=torch.complex128, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop7:
+        raise ValueError('Failed test_prop7')
+    
+    #eight prop test (n_env = 4 - 2j and n_layer = (0.1 - 5j), d = 0)
+    n_env = (4 - 2j)*torch.ones_like(wavelengths)
+    n_layer = (0.1 - 5j)*torch.ones_like(wavelengths)
+    d_layer = torch.tensor(0)
+
+    test_prop8 = prop_test(wavelengths, angles, n_layer, d_layer, n_env,
+                            dtype=dtype, device=device, threshold=1e-10,
+                            verbose=False)
+    
+    if not test_prop8:
+        raise ValueError('Failed test_prop8')
+    
+    print('All the tests are passed!')
+
+
 def single_layer_test(wavelengths: torch.Tensor,
                         angles: torch.Tensor, 
                         pol: str,
@@ -101,7 +206,7 @@ def single_layer_test(wavelengths: torch.Tensor,
 
     condition = MSE_r < 1e-8 and MSE_t < 1e-8
 
-    if verbose:
+    if not verbose:
         return True if condition else False
     else:
         return f"The single_layer_test for pol:'{pol}' {'passed' if condition else 'failed'} in {end - start} seconds, MSE_r: {MSE_r}, MSE_t: {MSE_t}"
@@ -188,7 +293,7 @@ def coherent_layer_test(wavelengths: torch.Tensor,
 
     condition = MSE_r < 1e-8 and MSE_t < 1e-8
 
-    if verbose:
+    if not verbose:
         return True if condition else False
     else:
         return f"The coherent_layer_test for pol:'{pol}' {'passed' if condition else 'failed'} in {end - start} seconds, MSE_r: {MSE_r}, MSE_t: {MSE_t}"
@@ -200,6 +305,7 @@ def prop_test(wavelengths: torch.Tensor,
               n_env: torch.Tensor,
               dtype: torch.dtype = torch.complex64,
               device: torch.device = torch.device('cpu'),
+              threshold: float = 1e-10,
               verbose: bool = False) -> str:
     '''
     Test the propagation matrix for a single layer.
@@ -234,6 +340,7 @@ def prop_test(wavelengths: torch.Tensor,
     assert n_env.ndim == 1, 'Refractive index of the environment must be a 1D tensor'
     assert wavelengths.shape[0] == n_env.shape[0], 'Wavelengths and refractive index of the environment must have the same length'
     assert wavelengths.shape[0] == n.shape[0], 'Wavelengths and refractive index must have the same length'
+    #assert n_env.imag.all() >= 0
 
     #T matrix method
     start = time.time()
@@ -244,15 +351,22 @@ def prop_test(wavelengths: torch.Tensor,
     end = time.time()
     
     #Analytical approach
-    beta = 2*np.pi/wavelengths[:, None]*torch.sqrt(n[:, None]**2 - nx**2)*d
-    t_analytical = torch.exp(1j*beta)
+    niz = torch.sqrt(n[:, None]**2 - nx**2)
+    delta = 2*torch.pi/wavelengths[:, None]*niz*d
+    # -- Split into phase (φ) and attenuation (α d) -----------------------
+    phi   = delta.real                                    # phase
+    alpha = (delta.imag.abs()).clamp(max=60.0)          # ensure αd ≤ clamp_alpha
 
+    delta = phi + 1j*alpha
+  
+    # torch.polar(r, θ)  returns  r·e^{iθ}
+    t_analytical  = torch.exp(1j*delta)
+    
     #Check if the two methods are the same
-    MSE = float(torch.mean(torch.abs(t - t_analytical)**2))
+    MSE = (torch.mean(torch.abs(t - t_analytical)**2)).item()
+    condition = MSE < threshold
 
-    condition = MSE < 1e-8 
-
-    if verbose:
+    if not verbose:
         return True if condition else False
     else:
         return f"The prop_test {'passed' if condition else 'failed'} in {end - start} seconds, MSE: {MSE}"
@@ -329,29 +443,23 @@ def interface_test(angles: torch.Tensor,
 
     condition = MSE_r < 1e-8 and MSE_t < 1e-8
 
-    if verbose:
+    if not verbose:
         return True if condition else False
     else:
         return f"The interface_test for pol:'{pol}' {'passed' if condition else 'failed'} in {end - start} seconds, MSE_r: {MSE_r}, MSE_t: {MSE_t}"
     
 
 if __name__ == '__main__':
+    #run_comprehensive_prop_test(device=torch.device('cpu'))
     wavelengths = torch.linspace(400, 800, 401)
-    angles = torch.linspace(0, 89, 90)*np.pi/180
+    angles = torch.linspace(0, 89, 90)
 
-    n_env = 1*torch.ones_like(wavelengths).to(torch.complex64)
-    n_subs = (2.5 + 0.5j)*torch.ones_like(wavelengths).to(torch.complex64)
+    n = 1*torch.ones_like(wavelengths)
+    n_env = 1*torch.ones_like(wavelengths)
+    n_subs = 1*torch.ones_like(wavelengths)
+    d = torch.tensor(1000000000)
 
-    n_layer = (10 + 0.2j)*torch.ones_like(wavelengths).to(torch.complex64)
-    d_layer = torch.tensor(30)
-
-    print(prop_test(wavelengths, angles, n_layer, d_layer, n_env,
-                    dtype=torch.complex128, device=torch.device('cpu')))
-    
-
-    print(single_layer_test(wavelengths, angles, pol='p', n=n_layer, d=d_layer,n_env=n_env, n_subs=n_subs,
-                    dtype=torch.complex128, device=torch.device('cpu')))
-
-
-    print(interface_test(angles, n_layer, n_subs, n_env, pol='p',
-                    dtype=torch.complex128, device=torch.device('cpu')))
+    dtype = torch.complex64
+    test = single_layer_test(wavelengths, angles, 'p', n, d, n_env, n_subs,
+                      dtype=dtype, verbose=True)
+    print(test)

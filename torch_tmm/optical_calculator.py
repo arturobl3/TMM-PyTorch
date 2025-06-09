@@ -62,6 +62,29 @@ class OpticalCalculator:
         else:
             assert False, 'Polarization must be either s or p'
         return torch.abs(r)**2
+    
+    def reflection_phase(self, pol:str):
+        """
+        Calculate the reflectance phase for s- or p-polarizations.
+
+        The reflection coefficient for each polarization is computed from the corresponding
+        transfer matrix T using:
+            r = T[1, 0] / T[0, 0]
+        The reflectance phase is then obtained by taking angle of the reflection coefficient.
+        Args:
+            pol(str): the polarization for which to calculate the reflactance phase
+        Returns:
+            tuple(torch.Tensor, torch.Tensor): The reflectance phase 
+            for the desired polarization
+        """
+
+        if pol == 's':
+            r = self.Tm_s[:, :, 1, 0]/self.Tm_s[:, :, 0, 0]
+        elif pol == 'p':
+            r = self.Tm_p[:, :, 1, 0]/self.Tm_p[:, :, 0, 0]
+        else:
+            assert False, 'Polarization must be either s or p'
+        return torch.angle(r)
         
 
     def transmission(self, pol:str):
@@ -93,6 +116,25 @@ class OpticalCalculator:
             assert False, 'Polarization must be either s or p'
 
         return torch.abs(t)**2 * torch.real(n2z/n1z)
+    
+    def transmission_phase(self, pol:str):
+        """
+        Calculate the transmittance phase for s- and p-polarizations.
+
+        Args:
+            pol(str): the polarization for which to calculate the transmittance phase
+        Returns:
+            tuple(torch.Tensor, torch.Tensor): The transmittance phase for the desired polarization
+        """
+
+        if pol == 's':
+            t = 1/self.Tm_s[:, :, 0, 0] 
+        elif pol == 'p':
+            t = 1/self.Tm_p[:, :, 0, 0] 
+        else:
+            assert False, 'Polarization must be either s or p'
+
+        return torch.angle(t)
 
 
     
