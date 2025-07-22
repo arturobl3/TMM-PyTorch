@@ -56,21 +56,24 @@ A PyTorch-based library for optical multilayer stacks simulation using the Trans
 pip install git+https://github.com/RodionovSA/torch_tmm.git
 ```
 
-Requires **PyTorch 1.10+** (CPU or CUDA).
+Requires **Python 3.10+**, **Numpy 1.21+**, **PyTorch 2.0+** (CPU or CUDA).
 
 ---
 
 ## Project Structure
 
 ```
-torch_tmm/              # core package
-├── t_matrix.py         # T_matrix: interface & propagation kernels
-├── dispersion.py       # BaseDispersion + models (Constant, Lorentz, etc.)
-├── material.py         # BaseMaterial / Material classes
-├── layer.py            # BaseLayer / Layer classes
-└── model.py            # high-level Model (env+structure+subs)
-tests/                  # unit & sanity tests
-README.md               # this file
+torch_tmm/                  # core package
+├── t_matrix.py             # T_matrix: interface & propagation kernels
+├── dispersion.py           # BaseDispersion + models (Constant, Lorentz, etc.)
+├── material.py             # BaseMaterial / Material classes
+├── layer.py                # BaseLayer / Layer classes
+└── model.py                # high-level Model (env+structure+subs)
+└── optical_calculator.py   # OpticalCalculator
+tmm_tests/                  # unit & sanity tests
+README.md                   # this file
+setup.py
+LICENSE
 ```
 
 Exports:
@@ -144,7 +147,7 @@ for epoch in range(100):
 
 ## GPU & Performance Tips
 
-* Use **`torch.compile(model)`** on PyTorch 2.0+ for JIT optimizations.
+* Use **`torch.compile(model)`** for JIT optimizations.
 * Employ **automatic mixed precision** (AMP) for faster kernels.
 * Ensure batched matmuls (`@`) drive throughput; avoid Python loops in hot paths.
 
