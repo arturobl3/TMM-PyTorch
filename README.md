@@ -94,16 +94,16 @@ from torch_tmm import (
 
 ```python
 import torch
-from torch_tmm import ConstantEpsilon, Material, Layer, Model
+from torch_tmm import Dispersion, Material, Layer, Model
 
 # 1D wavelength & angle arrays
 wls = torch.linspace(400, 800, 401)     # nm
 ths = torch.linspace(0, 80, 81)         # degrees
 
 # Dispersion models
-disp_env   = ConstantEpsilon(1.0)       # air
-disp_film  = Lorentz(A=1.9, E0=3.2, Gamma=0.15)
-disp_subs  = ConstantEpsilon(2.5)       # substrate
+disp_env   = Dispersion.Constant_epsilon(1.0)       # air
+disp_film  = Dispersion.Lorentz(A=1.9, E0=3.2, Gamma=0.15)
+disp_subs  = Dispersion.Constant_epsilon(2.5)       # substrate
 
 # Materials
 env_mat   = Material([disp_env],   name="Air")
@@ -111,9 +111,9 @@ film_mat  = Material([disp_film],  name="Film")
 subs_mat  = Material([disp_subs],  name="Substrate")
 
 # Layers
-env_layer  = Layer(env_mat,  layer_type="env")
+env_layer  = Layer(env_mat,  layer_type="semi-inf")
 film_layer = Layer(film_mat, layer_type="coh",  thickness=500e-9)
-subs_layer = Layer(subs_mat, layer_type="subs")
+subs_layer = Layer(subs_mat, layer_type="semi-inf")
 
 # Build model and move to GPU
 model = Model(env_layer, [film_layer], subs_layer)
