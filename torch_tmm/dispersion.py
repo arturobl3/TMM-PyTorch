@@ -21,8 +21,10 @@ Key Components:
     - `BaseDispersion`       : Abstract base class for dispersion models
     - `Constant_epsilon`     : Constant (wavelength-independent) dielectric permittivity
     - `Lorentz`              : Classical Lorentz oscillator model
+    - `Drude`                : Free electron model for metallic dispersion
     - `Cauchy`               : Polynomial model for transparent materials (real + imaginary parts)
     - `TaucLorentz`          : Amorphous semiconductor model combining Lorentz and bandgap behavior
+    - `TabulatedData`        : Interpolation-based model using experimental/computed data
 
 Conventions:
     - Wavelengths are assumed to be in nanometers (nm)
@@ -437,6 +439,132 @@ class Lorentz(BaseDispersion):
         """
 
         return f"Lorentz Dispersion(Coefficients (A,E0,Gamma):{self.A, self.E0, self.Gamma})"
+
+
+class Drude(BaseDispersion):
+    """
+    Implements the Drude dispersion model for optical properties of metals.
+
+    This class describes the optical response of free electrons in metals using the Drude model.
+    The model is characterized by two main parameters: the plasma frequency (related to the
+    free electron density) and the collision frequency (related to scattering mechanisms).
+
+    The complex dielectric function is given by:
+        ε(ω) = 1 - ωₚ²/(ω² + iωΓ)
+    where:
+        - ωₚ is the plasma frequency (related to free electron density)
+        - Γ is the collision frequency (damping/scattering rate)
+        - ω is the angular frequency of light
+
+    This model is particularly suitable for describing the optical properties of metals
+    in the infrared and visible spectral regions.
+
+    Attributes:
+        omega_p (torch.nn.Parameter): Plasma frequency, eV.
+        gamma (torch.nn.Parameter): Collision frequency (damping), eV.
+    """
+
+    _hc_over_e: torch.Tensor  # pre-computed in __init__ for speed
+
+    def __init__(
+        self,
+        omega_p: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        gamma: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+    ) -> None:
+        """
+        Initialize the Drude dispersion model with given parameters.
+
+        Args:
+            omega_p: Plasma frequency, eV. Related to the free electron density.
+                     Will be automatically converted to torch.nn.Parameter.
+            gamma: Collision frequency (damping), eV. Related to electron scattering rate.
+                   Will be automatically converted to torch.nn.Parameter.
+        """
+        super().__init__()
+        self.omega_p = omega_p
+        self.gamma = gamma
+
+        hc_over_e = 1.2398419843320026e3  # (h·c/e) in  eV·nm
+        self.register_buffer(
+            "_hc_over_e", torch.tensor(hc_over_e, dtype=self.dtype, device=self.device)
+        )
+
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Complex refractive index **n(λ)** derived from the Drude model
+        permittivity.
+
+        Given the electric permittivity ε(λ) produced by
+        :meth:`~Drude.epsilon`, the refractive index is
+
+            n(λ) = √ε(λ)
+
+        with the principal square-root branch.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+            Complex tensor containing the refractive index at each provided
+            wavelength.
+        """
+        return torch.sqrt(self.epsilon(wavelengths))
+
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex dielectric permittivity **ε(λ)** using the Drude model.
+
+        The electric permittivity **ε(λ)** is computed using the formula:
+            ε = 1 - ωₚ²/(ω² + iωΓ)
+        where ω is the angular frequency calculated from:
+            ω = E/ħ = (h * c / e) / (wavelengths * ħ/e) = (h * c) / (wavelengths * ħ)
+        Since ω = E/ħ and we work with photon energies E, we use:
+            ε = 1 - ωₚ²/(E² + iEΓ) * (ħ/e)²
+        But for simplicity in eV units:
+            ε = 1 - ωₚ²/(E² + iEΓ)
+        where E is the photon energy in eV.
+
+        Constants:
+            - h (Planck constant): 6.62607015e-34 J·s
+            - c (Speed of light): 299792458 m/s
+            - e (Elementary charge): 1.60217663e-19 C
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+           The computed complex electric permittivity.
+        """
+        wavelengths = self._prepare_wavelengths(wavelengths)
+        E = self._hc_over_e.to(self.dtype) / wavelengths
+
+        c_dtype = self._as_complex_dtype(self.dtype)
+        E = E.to(dtype=c_dtype)
+        omega_p = self.omega_p.to(dtype=c_dtype)
+        gamma = self.gamma.to(dtype=c_dtype)
+
+        # Drude electric permittivity calculation
+        # ε = 1 - ωₚ²/(E² + iEΓ)
+        epsilon = 1 - omega_p**2 / (E**2 + 1j * E * gamma)
+
+        return epsilon
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the dispersion instance.
+
+        Returns:
+            str: A string summarizing the dispersion.
+        """
+        return f"Drude Dispersion(Coefficients (omega_p, gamma): {self.omega_p, self.gamma})"
 
 
 class Cauchy(BaseDispersion):
