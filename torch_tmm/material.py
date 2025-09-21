@@ -10,12 +10,12 @@ License:
 Module: material.py
 ================================================================================
 Description:
-    This module defines the base classes and implementations for optical materials 
-    used in multilayer simulations. Materials are constructed from one or more 
-    dispersion models that describe the wavelength-dependent complex permittivity ε(λ). 
+    This module defines the base classes and implementations for optical materials
+    used in multilayer simulations. Materials are constructed from one or more
+    dispersion models that describe the wavelength-dependent complex permittivity ε(λ).
 
-    Each material can be evaluated at arbitrary wavelengths to provide its dielectric 
-    response, either as permittivity or as a refractive index ñ(λ) = √ε(λ), and supports 
+    Each material can be evaluated at arbitrary wavelengths to provide its dielectric
+    response, either as permittivity or as a refractive index ñ(λ) = √ε(λ), and supports
     automatic differentiation for optimization workflows.
 
 Key Components:
@@ -27,8 +27,8 @@ Conventions:
     - Units are assumed consistent across wavelength and dispersion models.
     - Materials automatically track device and dtype for compatibility with PyTorch operations.
     - Wavelengths are assumed to be in nanometers (nm)
-    
-    
+
+
 Example:
     >>> import torch
     >>> from torch_tmm import Dispersion, Material
@@ -42,7 +42,6 @@ Example:
 
 import torch
 import torch.nn as nn
-from typing import List
 from abc import ABC, abstractmethod
 from .dispersion import BaseDispersion
 
@@ -57,10 +56,11 @@ class BaseMaterial(nn.Module, ABC):
         device (torch.device): The device (e.g., CPU or GPU) where the tensors are allocated.
     """
 
-    def __init__(self,
-                 name: str | None = None,
-                 dtype: torch.dtype = torch.float,
-                 device: torch.device = torch.device('cpu'),
+    def __init__(
+        self,
+        name: str | None = None,
+        dtype: torch.dtype = torch.float,
+        device: torch.device = torch.device("cpu"),
     ) -> None:
         """
         Initialize a BaseMaterial instance.
@@ -73,13 +73,13 @@ class BaseMaterial(nn.Module, ABC):
         super().__init__()
 
         # convenience mirrors (kept in sync by .to())
-        self._dtype  = dtype
+        self._dtype = dtype
         self._device = device
-        self.name    = name
+        self.name = name
 
         # move all sub-modules to the requested dtype/device
         self.to(dtype=dtype, device=device)
-    
+
     @property
     def dtype(self) -> torch.dtype:
         return self._dtype
@@ -103,7 +103,7 @@ class BaseMaterial(nn.Module, ABC):
             self._device = kwargs.get("device", self._device)
 
         return ret
-    
+
     def _sync_dtype_device(self) -> None:
         """Update private mirrors from the first parameter or buffer."""
         try:
@@ -130,7 +130,7 @@ class BaseMaterial(nn.Module, ABC):
     def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """ñ(λ) = √ε(λ).  Provided once here for every subclass."""
         return torch.sqrt(self.epsilon(wavelengths))
-    
+
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}("
@@ -142,9 +142,9 @@ class Material(BaseMaterial):
     """
     Material aggregates multiple dispersion models to represent an optical material.
 
-    This class is designed to combine the contributions of several dispersion models 
-    to compute the overall refractive index of a material. It is particularly useful 
-    in optical simulations and thin film optimization where the optical response 
+    This class is designed to combine the contributions of several dispersion models
+    to compute the overall refractive index of a material. It is particularly useful
+    in optical simulations and thin film optimization where the optical response
     may result from several dispersion effects.
 
     Attributes:
@@ -155,13 +155,14 @@ class Material(BaseMaterial):
         device (torch.device): The device (e.g., CPU or GPU) where the tensors are allocated.
     """
 
-    def __init__(self,
-                 dispersion: List[BaseDispersion],
-                 name : str = None,
-                 dtype: torch.dtype = torch.float,
-                 device: torch.device = torch.device('cpu'),
-                 *,
-                 requires_grad: bool = False,
+    def __init__(
+        self,
+        dispersion: list[BaseDispersion],
+        name: str = None,
+        dtype: torch.dtype = torch.float,
+        device: torch.device = torch.device("cpu"),
+        *,
+        requires_grad: bool = False,
     ) -> None:
         """
         Initialize a BaseMaterial instance.
@@ -180,30 +181,30 @@ class Material(BaseMaterial):
         self.dispersion = nn.ModuleList(dispersion)
 
         # convenience mirrors (kept in sync by .to())
-        self._dtype  = dtype
+        self._dtype = dtype
         self._device = device
-        self.name    = name
+        self.name = name
 
         # move all sub-modules to the requested dtype/device
         self.to(dtype=dtype, device=device)
 
         for param in self.parameters():
             param.requires_grad = requires_grad
-    
+
     def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
         Compute the overall epsilon of the material.
 
         This method calculates the material's epsilon by summing the dielectric permittivity
-        contributions from each dispersion model in the `dispersion` list. The summation 
+        contributions from each dispersion model in the `dispersion` list. The summation
         is performed element-wise over a tensor that spans the specified number of wavelengths.
 
         Parameters:
             wavelengths : torch.Tensor
-            Wavelengths in **nanometres** (positive, floating tensor).  
+            Wavelengths in **nanometres** (positive, floating tensor).
 
         Returns:
-            torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 
+            torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed
                           refractive index at each wavelength.
         """
         if not self.dispersion:
@@ -214,7 +215,7 @@ class Material(BaseMaterial):
 
         eps_list = [d.epsilon(wavelengths) for d in self.dispersion]
         return torch.stack(eps_list, dim=0).sum(dim=0)
-    
+
     def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
         Compute the overall refractive index of the material.
@@ -223,14 +224,14 @@ class Material(BaseMaterial):
 
         Parameters:
             wavelengths : torch.Tensor
-            Wavelengths in **nanometres** (positive, floating tensor).  
+            Wavelengths in **nanometres** (positive, floating tensor).
 
         Returns:
-            torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed 
+            torch.tensor: A 1D tensor of shape (num_wavelength,) representing the computed
                           refractive index at each wavelength.
         """
         return torch.sqrt(self.epsilon(wavelengths))
-    
+
     def __repr__(self) -> str:
         """
         Return a string representation of the Material instance.
@@ -239,8 +240,11 @@ class Material(BaseMaterial):
             str: A string summarizing the Layer.
         """
 
-        dispersion_repr = f"[{', '.join(repr(dispersion) for dispersion in self.dispersion)}]"
-        return (f"Material(\n"
-                f"  Name: {self.name},\n"
-                f"  Dispersions: {dispersion_repr},\n (n={len(self.dispersion)} dispersions)"
-                )
+        dispersion_repr = (
+            f"[{', '.join(repr(dispersion) for dispersion in self.dispersion)}]"
+        )
+        return (
+            f"Material(\n"
+            f"  Name: {self.name},\n"
+            f"  Dispersions: {dispersion_repr},\n (n={len(self.dispersion)} dispersions)"
+        )

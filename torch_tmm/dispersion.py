@@ -41,7 +41,7 @@ Example:
 ================================================================================
 """
 
-from typing import List, Tuple, Union
+from typing import Union
 from abc import ABC, abstractmethod
 import torch
 import numpy as np
