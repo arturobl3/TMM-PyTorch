@@ -732,3 +732,175 @@ class TaucLorentz(BaseDispersion):
                  data type, and device.
         """
         return f"TaucLorentz Dispersion(Coefficients(Eg, A, E0, Gamma):{[self.Eg, self.A, self.E0, self.Gamma]})"
+
+
+class TabulatedData(BaseDispersion):
+    """
+    Implements a tabulated dispersion model using interpolation.
+
+    This class allows for the use of experimental or pre-computed dispersion data
+    by interpolating between tabulated wavelength and refractive index values.
+
+    Attributes:
+        wavelengths_table (torch.Tensor): Tabulated wavelengths in nanometers (must be sorted).
+        refractive_index_table (torch.Tensor): Complex refractive index values at the tabulated wavelengths.
+    """
+
+    def __init__(
+        self,
+        wavelengths_table: torch.Tensor,
+        refractive_index_table: torch.Tensor,
+    ) -> None:
+        """
+        Initialize the TabulatedData dispersion model.
+
+        Args:
+            wavelengths_table (torch.Tensor): 1D tensor of wavelengths in nanometers, must be sorted in ascending order.
+            refractive_index_table (torch.Tensor): 1D tensor of complex refractive index values corresponding to wavelengths_table.
+
+        Raises:
+            ValueError: If wavelengths_table and refractive_index_table have different lengths.
+            ValueError: If wavelengths_table is not sorted in ascending order.
+        """
+        super().__init__()
+
+        # Validate inputs
+        if wavelengths_table.shape[0] != refractive_index_table.shape[0]:
+            raise ValueError(
+                "wavelengths_table and refractive_index_table must have the same length"
+            )
+
+        if wavelengths_table.numel() < 2:
+            raise ValueError("At least 2 data points are required for interpolation")
+
+        # Check if wavelengths are sorted
+        if not torch.all(wavelengths_table[1:] > wavelengths_table[:-1]):
+            raise ValueError("wavelengths_table must be sorted in ascending order")
+
+        # Register as buffers so they move with the module but don't require gradients
+        # Ensure proper dtypes from the start
+        wavelengths_tensor = wavelengths_table.to(dtype=self.dtype, device=self.device)
+        refractive_index_tensor = refractive_index_table.to(
+            dtype=self._as_complex_dtype(self.dtype), device=self.device
+        )
+
+        self.register_buffer("wavelengths_table", wavelengths_tensor)
+        self.register_buffer("refractive_index_table", refractive_index_tensor)
+
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex refractive index at given wavelengths using linear interpolation.
+
+        Raises an error if wavelengths are outside the tabulated range.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+            Complex refractive index at each wavelength, computed by interpolating the tabulated data.
+
+        Raises
+        ------
+        ValueError
+            If any wavelength is outside the tabulated wavelength range.
+        """
+        wavelengths = self._prepare_wavelengths(wavelengths)
+        c_dtype = self._as_complex_dtype(self.dtype)
+
+        # Convert wavelengths to the same dtype as the table for interpolation
+        wavelengths = wavelengths.to(dtype=self.dtype, device=self.device)
+
+        # Get tabulated data
+        wavelengths_table = getattr(self, "wavelengths_table")
+        refractive_index_table = getattr(self, "refractive_index_table")
+
+        # Check for out-of-bounds wavelengths
+        min_wavelength = wavelengths_table.min()
+        max_wavelength = wavelengths_table.max()
+
+        out_of_bounds_low = wavelengths < min_wavelength
+        out_of_bounds_high = wavelengths > max_wavelength
+
+        if torch.any(out_of_bounds_low) or torch.any(out_of_bounds_high):
+            if torch.any(out_of_bounds_low):
+                min_requested = wavelengths[out_of_bounds_low].min().item()
+                raise ValueError(
+                    f"Wavelength {min_requested:.2f} nm is below the minimum tabulated "
+                    f"wavelength of {min_wavelength.item():.2f} nm. Extrapolation is not supported."
+                )
+            if torch.any(out_of_bounds_high):
+                max_requested = wavelengths[out_of_bounds_high].max().item()
+                raise ValueError(
+                    f"Wavelength {max_requested:.2f} nm is above the maximum tabulated "
+                    f"wavelength of {max_wavelength.item():.2f} nm. Extrapolation is not supported."
+                )
+
+        # Use torch.nn.functional.interpolate or manual interpolation
+        # Since torch.interp might not be available, we'll use manual linear interpolation
+        def linear_interp_1d(
+            x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor
+        ) -> torch.Tensor:
+            """Linear interpolation for 1D tensors."""
+            # Find indices for interpolation
+            indices = torch.searchsorted(xp, x, right=False)
+            indices = torch.clamp(indices, 1, len(xp) - 1)
+
+            # Get surrounding points
+            x0 = xp[indices - 1]
+            x1 = xp[indices]
+            y0 = fp[indices - 1]
+            y1 = fp[indices]
+
+            # Linear interpolation: y = y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+            # Handle case where x1 == x0 (avoid division by zero)
+            denom = x1 - x0
+            denom = torch.where(denom == 0, torch.ones_like(denom), denom)
+            weights = (x - x0) / denom
+
+            return y0 + weights * (y1 - y0)
+
+        # Perform interpolation for real and imaginary parts separately
+        n_real = linear_interp_1d(
+            wavelengths, wavelengths_table, refractive_index_table.real
+        )
+        n_imag = linear_interp_1d(
+            wavelengths, wavelengths_table, refractive_index_table.imag
+        )
+
+        # Combine real and imaginary parts
+        return (n_real + 1j * n_imag).to(dtype=c_dtype)
+
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex dielectric permittivity from the interpolated refractive index.
+
+        The permittivity is computed as ε(λ) = ñ(λ)² where ñ(λ) is obtained from interpolation.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+            Complex dielectric permittivity at each wavelength.
+        """
+        return self.refractive_index(wavelengths) ** 2
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the TabulatedData dispersion instance.
+
+        Returns:
+            str: A string summarizing the tabulated dispersion model.
+        """
+        wavelengths_table = getattr(self, "wavelengths_table")
+        wl_min = wavelengths_table[0].item()
+        wl_max = wavelengths_table[-1].item()
+        n_points = wavelengths_table.shape[0]
+        return f"TabulatedData Dispersion(wavelength range: {wl_min:.1f}-{wl_max:.1f} nm, {n_points} data points)"

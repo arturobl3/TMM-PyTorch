@@ -158,7 +158,7 @@ class Material(BaseMaterial):
     def __init__(
         self,
         dispersion: list[BaseDispersion],
-        name: str = None,
+        name: str | None = None,
         dtype: torch.dtype = torch.float,
         device: torch.device = torch.device("cpu"),
         *,
@@ -186,10 +186,79 @@ class Material(BaseMaterial):
         self.name = name
 
         # move all sub-modules to the requested dtype/device
-        self.to(dtype=dtype, device=device)
+        self._smart_to(dtype=dtype, device=device)
 
         for param in self.parameters():
             param.requires_grad = requires_grad
+
+    def _smart_to(self, dtype=None, device=None):
+        """
+        Intelligent dtype/device conversion that preserves complex buffers.
+
+        This method handles the dtype conversion more carefully than the default
+        nn.Module.to() method. It:
+        1. Converts all tensors to the target device
+        2. Converts parameters to the target dtype
+        3. Preserves complex dtypes for buffers (to avoid data loss)
+
+        Args:
+            dtype: Target dtype for parameters (buffers with complex data are preserved)
+            device: Target device for all tensors
+        """
+        # Handle device movement first (this is safe for all tensors)
+        if device is not None:
+            super().to(device=device)
+
+        # Handle dtype conversion with complex preservation
+        if dtype is not None:
+            # Convert parameters to target dtype
+            for param in self.parameters():
+                if param.dtype != dtype:
+                    param.data = param.data.to(dtype=dtype)
+
+            # For buffers, only convert if not complex or if target is also complex
+            for name, buffer in self.named_buffers():
+                if buffer.dtype.is_complex:
+                    # Preserve complex buffers - don't convert to real dtypes
+                    if dtype.is_complex:
+                        buffer.data = buffer.data.to(dtype=dtype)
+                    # If target is real, keep complex buffer as-is (preserve data)
+                    else:
+                        continue
+                else:
+                    # Non-complex buffers can be safely converted
+                    buffer.data = buffer.data.to(dtype=dtype)
+
+        # Update internal mirrors
+        self._dtype = dtype if dtype is not None else self._dtype
+        self._device = device if device is not None else self._device
+
+    def to(self, *args, **kwargs):
+        """
+        Override to() method to use smart dtype handling.
+
+        This preserves complex buffers while allowing dtype conversion of parameters.
+        """
+        # Parse arguments like nn.Module.to() does
+        device = kwargs.get("device")
+        dtype = kwargs.get("dtype")
+
+        # Handle positional arguments
+        if len(args) == 1:
+            if isinstance(args[0], torch.dtype):
+                dtype = args[0]
+            elif isinstance(args[0], torch.device):
+                device = args[0]
+            elif isinstance(args[0], torch.Tensor):
+                dtype = args[0].dtype
+                device = args[0].device
+        elif len(args) == 2:
+            device, dtype = args
+
+        # Use our smart conversion
+        self._smart_to(dtype=dtype, device=device)
+
+        return self
 
     def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
         """
