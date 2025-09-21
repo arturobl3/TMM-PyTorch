@@ -1,13 +1,9 @@
 import torch
-import time
 import copy
 from typing import List, Tuple
-from torch_tmm.dispersion import Constant_epsilon, Lorentz, BaseDispersion
-from torch_tmm.material import BaseMaterial
 from torch_tmm.layer import BaseLayer
 
 from tmm_tests.test_dispersion import dispersion_sanity_test
-from tmm_tests.test_material import material_sanity_check
 
 
 def layer_sanity_check(
@@ -21,10 +17,10 @@ def layer_sanity_check(
 
     Checks performed
     ----------------
-    1.  Layer-level dtype propagation:  
-        • `.to(torch.float32)` ⇒ ε, ñ are `complex64`  
+    1.  Layer-level dtype propagation:
+        • `.to(torch.float32)` ⇒ ε, ñ are `complex64`
         • `.to(torch.float64)` ⇒ ε, ñ are `complex128`
-    2.  Thickness (only for `layer_type="coh"`)  
+    2.  Thickness (only for `layer_type="coh"`)
         • scalar, positive, lives on the same dtype / device as the layer
     3.  Material-level dtype propagation (same two stages as above).
     4.  Delegates to :func:`dispersion_sanity_test` for every dispersion
@@ -43,7 +39,7 @@ def layer_sanity_check(
     ]
 
     # ---------------------------------------------------------------------
-    test_layer = copy.deepcopy(layer)          # keep caller untouched
+    test_layer = copy.deepcopy(layer)  # keep caller untouched
     all_ok = True
 
     for real_dtype, c_dtype in stages:
@@ -63,12 +59,12 @@ def layer_sanity_check(
             "ñ dtype",
         )
 
-       # ---- thickness (only coherent layers) --------------------------------
+        # ---- thickness (only coherent layers) --------------------------------
         if test_layer.layer_type == "coh":
             t = test_layer.thickness
             all_ok &= _report(t.dtype is real_dtype, "thickness dtype")
             all_ok &= _report(
-                t.device == test_layer.material.device,   # <- equality, not identity
+                t.device == test_layer.material.device,  # <- equality, not identity
                 "thickness device",
             )
             all_ok &= _report(
@@ -81,9 +77,7 @@ def layer_sanity_check(
         if verbose:
             print(f"--- embedded material ({mat.name}) ---")
         all_ok &= _report(mat.dtype is real_dtype, "material.dtype")
-        all_ok &= _report(
-            mat.epsilon(wavelengths).dtype is c_dtype, "material ε dtype"
-        )
+        all_ok &= _report(mat.epsilon(wavelengths).dtype is c_dtype, "material ε dtype")
         all_ok &= _report(
             mat.refractive_index(wavelengths).dtype is c_dtype, "material ñ dtype"
         )
