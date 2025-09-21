@@ -257,13 +257,15 @@ class Constant_epsilon(BaseDispersion):
 
     def __init__(
         self,
-        epsilon_const: torch.nn.Parameter,
+        epsilon_const: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
     ) -> None:
         """
         Initialize the Constant_epsilon instance.
 
         Args:
-            epsilon_const (torch.nn.Parameter): The constant dielectric permittivity value.
+            epsilon_const: The constant dielectric permittivity value. Can be a float, int,
+                          numpy array, torch.Tensor, or torch.nn.Parameter. Will be automatically
+                          converted to torch.nn.Parameter.
         """
         super().__init__()
         self.epsilon_const = epsilon_const
@@ -335,23 +337,24 @@ class Lorentz(BaseDispersion):
     Attributes:
         A (torch.nn.Parameter): Oscillator amplitude, eV**2.
         E0 (torch.nn.Parameter): Resonance energy, eV.
-        C (torch.nn.Parameter): Damping coefficient, eV.
+        Gamma (torch.nn.Parameter): Damping coefficient, eV.
     """
 
     _hc_over_e: torch.Tensor  # pre-computed in __init__ for speed
 
     def __init__(
         self,
-        A: torch.nn.Parameter,
-        E0: torch.nn.Parameter,
-        Gamma: torch.nn.Parameter,
+        A: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        E0: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        Gamma: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
     ) -> None:
         """
         Initialize the Lorentz dispersion model with given parameters.
+
         Args:
-            A (torch.nn.Parameter): Oscillator amplitude, eV**2.
-            E0 (torch.nn.Parameter): Resonance energy, eV.
-            Gamma (torch.nn.Parameter): Damping coefficient, eV.
+            A: Oscillator amplitude, eV**2. Will be automatically converted to torch.nn.Parameter.
+            E0: Resonance energy, eV. Will be automatically converted to torch.nn.Parameter.
+            Gamma: Damping coefficient, eV. Will be automatically converted to torch.nn.Parameter.
         """
         super().__init__()
         self.A = A
@@ -448,7 +451,7 @@ class Cauchy(BaseDispersion):
         n = A + (1e4 * B) / wavelength² + (1e9 * C) / wavelength⁴
         k = D + (1e4 * E) / wavelength² + (1e9 * F) / wavelength⁴
     so that the complex refractive index is:
-        ñ = n + i * k
+        ñ = n + i * k
 
     Attributes:
         A, B, C (torch.nn.Parameter): Coefficients for the real part of the refractive index.
@@ -457,23 +460,23 @@ class Cauchy(BaseDispersion):
 
     def __init__(
         self,
-        A: torch.nn.Parameter,
-        B: torch.nn.Parameter = 0,
-        C: torch.nn.Parameter = 0,
-        D: torch.nn.Parameter = 0,
-        E: torch.nn.Parameter = 0,
-        F: torch.nn.Parameter = 0,
+        A: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        B: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        C: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        D: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        E: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        F: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
     ) -> None:
         """
         Initialize the Cauchy dispersion model with specified coefficients.
 
         Args:
-            A (torch.nn.Parameter): Coefficient for the constant term in the real part.
-            B (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the real part.
-            C (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the real part.
-            D (torch.nn.Parameter): Coefficient for the constant term in the imaginary part.
-            E (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the imaginary part.
-            F (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the imaginary part.
+            A: Coefficient for the constant term in the real part. Will be automatically converted to torch.nn.Parameter.
+            B: Coefficient for the 1/wavelength² term in the real part. Will be automatically converted to torch.nn.Parameter.
+            C: Coefficient for the 1/wavelength⁴ term in the real part. Will be automatically converted to torch.nn.Parameter.
+            D: Coefficient for the constant term in the imaginary part. Will be automatically converted to torch.nn.Parameter.
+            E: Coefficient for the 1/wavelength² term in the imaginary part. Will be automatically converted to torch.nn.Parameter.
+            F: Coefficient for the 1/wavelength⁴ term in the imaginary part. Will be automatically converted to torch.nn.Parameter.
         """
         super().__init__()
         self.A = A
@@ -569,26 +572,26 @@ class TaucLorentz(BaseDispersion):
         Eg (torch.nn.Parameter): Optical band gap energy.
         A (torch.nn.Parameter): Amplitude of the transition.
         E0 (torch.nn.Parameter): Resonance energy.
-        C (torch.nn.Parameter): Broadening (damping) parameter.
+        Gamma (torch.nn.Parameter): Broadening (damping) parameter.
     """
 
     _hc_over_e: torch.Tensor  # pre-computed in __init__ for speed
 
     def __init__(
         self,
-        Eg: torch.nn.Parameter,
-        A: torch.nn.Parameter,
-        E0: torch.nn.Parameter,
-        Gamma: torch.nn.Parameter,
+        Eg: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        A: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        E0: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        Gamma: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
     ) -> None:
         """
         Initialize the TaucLorentz model with the specified parameters.
 
         Args:
-            Eg (torch.nn.Parameter): Optical band gap energy.
-            A (torch.nn.Parameter): Amplitude of the transition.
-            E0 (torch.nn.Parameter): Resonance energy.
-            Gamma (torch.nn.Parameter): Broadening (damping) parameter.
+            Eg: Optical band gap energy. Will be automatically converted to torch.nn.Parameter.
+            A: Amplitude of the transition. Will be automatically converted to torch.nn.Parameter.
+            E0: Resonance energy. Will be automatically converted to torch.nn.Parameter.
+            Gamma: Broadening (damping) parameter. Will be automatically converted to torch.nn.Parameter.
         """
         super().__init__()
         self.Eg = Eg

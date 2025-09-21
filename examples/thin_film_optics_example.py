@@ -130,17 +130,13 @@ def calculate_thin_film_optics(film_thickness_nm=100.0, angle_deg=0.0):
     # Define materials
     print("Setting up materials...")
 
-    # Air environment (n = 1.0, ε = 1.0)
-    air_epsilon = torch.nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
-    air_mat = Material(
-        [Dispersion.Constant_epsilon(epsilon_const=air_epsilon)], name="Air"
-    )
+    # Air environment (n = 1.0, ε = 1.0) - much simpler now!
+    air_mat = Material([Dispersion.Constant_epsilon(epsilon_const=1.0)], name="Air")
     air_layer_inf = Layer(air_mat, layer_type="semi-inf")
 
-    # Intrinsic silicon substrate (n ≈ 3.56, ε ≈ 12.7)
-    si_epsilon = torch.nn.Parameter(torch.tensor(12.6964494, dtype=torch.float32))
+    # Intrinsic silicon substrate (n ≈ 3.56, ε ≈ 12.7) - much simpler now!
     intrinsic_si_mat = Material(
-        [Dispersion.Constant_epsilon(epsilon_const=si_epsilon)],
+        [Dispersion.Constant_epsilon(epsilon_const=12.6964494)],
         name="intrinsic-Si",
         requires_grad=False,
     )
@@ -156,7 +152,7 @@ def calculate_thin_film_optics(film_thickness_nm=100.0, angle_deg=0.0):
     # Create finite thickness layer for the thin film
     thin_film_layer = Layer(thin_film_mat, thickness=film_thickness_nm)
 
-    print(f"Materials created:")
+    print("Materials created:")
     print(f"  - Environment: {air_mat.name}")
     print(f"  - Thin film: {thin_film_mat.name} ({film_thickness_nm:.1f} nm)")
     print(f"  - Substrate: {intrinsic_si_mat.name}")
