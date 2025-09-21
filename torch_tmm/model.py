@@ -146,7 +146,7 @@ class Model(nn.Module):
         """
         # Handle device movement first (this is safe for all tensors)
         if device is not None:
-            super().to(device=device)
+            nn.Module.to(self, device=device)
 
         # Handle dtype conversion with complex preservation
         if dtype is not None:
@@ -226,7 +226,7 @@ class Model(nn.Module):
         self.T_matrix = T_matrix(self._c_dtype, self._device)
 
     def _apply(self, fn, recurse=True):
-        out = super()._apply(fn, recurse)  # moves all parameters & buffers
+        out = nn.Module._apply(self, fn, recurse)  # moves all parameters & buffers
         self._sync_dtype_device()
         return out
 
