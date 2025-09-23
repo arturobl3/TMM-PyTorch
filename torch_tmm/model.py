@@ -10,9 +10,9 @@ License:
 Module: model.py
 ================================================================================
 Description:
-    This module defines the optical model used for simulation. It collects all layers, 
-    wavelengths, and angles, and computes the corresponding T-matrices for both in-plane (p-polarized) 
-    and out-of-plane (s-polarized) light. The result is an instance of an optical calculator that enables 
+    This module defines the optical model used for simulation. It collects all layers,
+    wavelengths, and angles, and computes the corresponding T-matrices for both in-plane (p-polarized)
+    and out-of-plane (s-polarized) light. The result is an instance of an optical calculator that enables
     the evaluation of various optical quantities (transmission, reflection, ...).
 
 Key Components:
@@ -25,7 +25,7 @@ Conventions:
     - Optical wave propagates left to right (from environment to substrate).
     - Wavelengths and layer thicknesses must be specified in nanometers (nm).
     - Incident angles are in degrees and must be in the range [0°, 90°).
-    
+
 Example:
     >>> import torch
     >>> from torch_tmm import Dispersion, Material, Model, Layer
@@ -55,12 +55,12 @@ Example:
 ================================================================================
 """
 
-from typing import List, Tuple, Literal
-from .layer import BaseLayer, LayerType
+from .layer import BaseLayer
 from .t_matrix import T_matrix
 from .optical_calculator import OpticalCalculator
-import torch 
+import torch
 import torch.nn as nn
+
 
 class Model(nn.Module):
     """
@@ -128,7 +128,76 @@ class Model(nn.Module):
         self.T_matrix = T_matrix(self._c_dtype, self._device)
 
         # move everything to the requested dtype/device once
-        self.to(dtype=dtype, device=device)
+        self._smart_to(dtype=dtype, device=device)
+
+    def _smart_to(self, dtype=None, device=None):
+        """
+        Intelligent dtype/device conversion that preserves complex buffers.
+
+        This method handles the dtype conversion more carefully than the default
+        nn.Module.to() method. It:
+        1. Converts all tensors to the target device
+        2. Converts parameters to the target dtype
+        3. Preserves complex dtypes for buffers (to avoid data loss)
+
+        Args:
+            dtype: Target dtype for parameters (buffers with complex data are preserved)
+            device: Target device for all tensors
+        """
+        # Handle device movement first (this is safe for all tensors)
+        if device is not None:
+            nn.Module.to(self, device=device)
+
+        # Handle dtype conversion with complex preservation
+        if dtype is not None:
+            # Convert parameters to target dtype
+            for param in self.parameters():
+                if param.dtype != dtype:
+                    param.data = param.data.to(dtype=dtype)
+
+            # For buffers, only convert if not complex or if target is also complex
+            for name, buffer in self.named_buffers():
+                if buffer.dtype.is_complex:
+                    # Preserve complex buffers - don't convert to real dtypes
+                    if dtype.is_complex:
+                        buffer.data = buffer.data.to(dtype=dtype)
+                    # If target is real, keep complex buffer as-is (preserve data)
+                    else:
+                        continue
+                else:
+                    # Non-complex buffers can be safely converted
+                    buffer.data = buffer.data.to(dtype=dtype)
+
+        # Update internal mirrors
+        self._dtype = dtype if dtype is not None else self._dtype
+        self._device = device if device is not None else self._device
+
+    def to(self, *args, **kwargs):
+        """
+        Override to() method to use smart dtype handling.
+
+        This preserves complex buffers while allowing dtype conversion of parameters.
+        """
+        # Parse arguments like nn.Module.to() does
+        device = kwargs.get("device")
+        dtype = kwargs.get("dtype")
+
+        # Handle positional arguments
+        if len(args) == 1:
+            if isinstance(args[0], torch.dtype):
+                dtype = args[0]
+            elif isinstance(args[0], torch.device):
+                device = args[0]
+            elif isinstance(args[0], torch.Tensor):
+                dtype = args[0].dtype
+                device = args[0].device
+        elif len(args) == 2:
+            device, dtype = args
+
+        # Use our smart conversion
+        self._smart_to(dtype=dtype, device=device)
+
+        return self
 
     # ----------------------------------------------------------------- API --
     @property
@@ -156,8 +225,8 @@ class Model(nn.Module):
         # re-instantiate helper that caches dtype/device
         self.T_matrix = T_matrix(self._c_dtype, self._device)
 
-    def _apply(self, fn):
-        out = super()._apply(fn)  # moves all parameters & buffers
+    def _apply(self, fn, recurse=True):
+        out = nn.Module._apply(self, fn, recurse)  # moves all parameters & buffers
         self._sync_dtype_device()
         return out
 
@@ -174,28 +243,30 @@ class Model(nn.Module):
         env_repr = repr(self.env)
         subs_repr = repr(self.subs)
         structure_repr = f"[{', '.join(repr(layer) for layer in self.structure)}]"
-        return (f"Model(\n"
-                f"  Environment: {env_repr},\n"
-                f"  Structure: {structure_repr} (n={len(self.structure)} layers),\n"
-                f"  Substrate: {subs_repr},\n"
-                f"  Dtype: {self.dtype}, Device: {self.device}\n"
-                f")")
+        return (
+            f"Model(\n"
+            f"  Environment: {env_repr},\n"
+            f"  Structure: {structure_repr} (n={len(self.structure)} layers),\n"
+            f"  Substrate: {subs_repr},\n"
+            f"  Dtype: {self.dtype}, Device: {self.device}\n"
+            f")"
+        )
 
     # --------------------------------------------------------------------- forward
     def forward(
         self,
-        wavelengths: torch.Tensor,      # 1-D  (L,)
-        angles:      torch.Tensor,      # 1-D  (A,) in degrees
+        wavelengths: torch.Tensor,  # 1-D  (L,)
+        angles: torch.Tensor,  # 1-D  (A,) in degrees
     ) -> OpticalCalculator:
         """
         Compute optical response for every wavelength / angle pair.
 
         Parameters:
             wavelengths : torch.Tensor
-            Wavelengths in **nanometres** (positive, floating tensor). 
+            Wavelengths in **nanometres** (positive, floating tensor).
 
             angles : torch.Tensor
-            Angles in **degreed** (positive, floating tensor). 
+            Angles in **degreed** (positive, floating tensor).
 
         Returns
         -------
@@ -206,33 +277,39 @@ class Model(nn.Module):
         if wavelengths.ndim != 1 or angles.ndim != 1:
             raise ValueError("wavelengths and angles must be 1-D tensors.")
 
-        wl = wavelengths.to(dtype=self.dtype, device=self.device)           # (L,)
-        th = torch.deg2rad(angles).to(dtype=self.dtype, device=self.device) # (A,)
+        wl = wavelengths.to(dtype=self.dtype, device=self.device)  # (L,)
+        th = torch.deg2rad(angles).to(dtype=self.dtype, device=self.device)  # (A,)
 
         # ---------- refractive indices --------------------------------------
-        n_env  = self.env.refractive_index(wl)             # (L,)
-        n_subs = self.subs.refractive_index(wl)            # (L,)
-        n_air  = torch.ones_like(n_env, dtype=self._c_dtype)
+        n_env = self.env.refractive_index(wl)  # (L,)
+        n_subs = self.subs.refractive_index(wl)  # (L,)
+        n_air = torch.ones_like(n_env, dtype=self._c_dtype)
 
-        nx = n_env[:, None] * torch.sin(th)[None, :]       # (L,A)
+        nx = n_env[:, None] * torch.sin(th)[None, :]  # (L,A)
 
         # ---------- s-polarisation ------------------------------------------
-        T_s = self._stack_transfer(wl, th, nx, pol="s", n_air=n_air,
-                                n_env=n_env, n_subs=n_subs)
+        T_s = self._stack_transfer(
+            wl, th, nx, pol="s", n_air=n_air, n_env=n_env, n_subs=n_subs
+        )
 
         # ---------- p-polarisation ------------------------------------------
-        T_p = self._stack_transfer(wl, th, nx, pol="p", n_air=n_air,
-                                n_env=n_env, n_subs=n_subs)
+        T_p = self._stack_transfer(
+            wl, th, nx, pol="p", n_air=n_air, n_env=n_env, n_subs=n_subs
+        )
 
-        return OpticalCalculator(Tm_s=T_s, Tm_p=T_p,
-                                n_env=n_env, n_subs=n_subs, nx=nx)
+        return OpticalCalculator(Tm_s=T_s, Tm_p=T_p, n_env=n_env, n_subs=n_subs, nx=nx)
 
     # ----------------------------------------------------------------  helpers
     def _stack_transfer(
         self,
-        wl: torch.Tensor, th: torch.Tensor, nx: torch.Tensor,
-        *, pol: str,
-        n_air: torch.Tensor, n_env: torch.Tensor, n_subs: torch.Tensor
+        wl: torch.Tensor,
+        th: torch.Tensor,
+        nx: torch.Tensor,
+        *,
+        pol: str,
+        n_air: torch.Tensor,
+        n_env: torch.Tensor,
+        n_subs: torch.Tensor,
     ) -> torch.Tensor:
         """
         Build full 2×2 transfer matrix for one polarisation.
@@ -240,24 +317,30 @@ class Model(nn.Module):
         Returns ``T[L,A,2,2]``.
         """
         # Interfaces: env ↔ air  (air is modelling the stack entrance)
-        T_env = (self.T_matrix.interface_s if pol == "s"
-                else self.T_matrix.interface_p)(n_env, n_air, nx)     # (L,A,2,2)
+        T_env = (
+            self.T_matrix.interface_s if pol == "s" else self.T_matrix.interface_p
+        )(
+            n_env, n_air, nx
+        )  # (L,A,2,2)
 
         # Internal stack
         T_stack = self._structure_matrix(wl, nx, pol)
 
         # Exit interface: air ↔ substrate
-        T_subs = (self.T_matrix.interface_s if pol == "s"
-                else self.T_matrix.interface_p)(n_air, n_subs, nx)    # (L,A,2,2)
+        T_subs = (
+            self.T_matrix.interface_s if pol == "s" else self.T_matrix.interface_p
+        )(
+            n_air, n_subs, nx
+        )  # (L,A,2,2)
 
         # total = T_env · T_stack · T_subs
-        return T_env @ T_stack @ T_subs                                # (L,A,2,2)
+        return T_env @ T_stack @ T_subs  # (L,A,2,2)
 
     # ------------------------------------------------------------ structure mat
     def _structure_matrix(
         self,
-        wl: torch.Tensor,                # (L,)
-        nx: torch.Tensor,                # (L,A)
+        wl: torch.Tensor,  # (L,)
+        nx: torch.Tensor,  # (L,A)
         pol: str,
     ) -> torch.Tensor:
         """
@@ -266,17 +349,19 @@ class Model(nn.Module):
         Returns ``T[L,A,2,2]`` (identity if stack is empty).
         """
         L, A = wl.shape[0], nx.shape[1]
-        T_tot = torch.eye(2, dtype=self._c_dtype, device=self.device)\
-                .expand(L, A, 2, 2)                     # broadcasted identity
+        T_tot = torch.eye(2, dtype=self._c_dtype, device=self.device).expand(
+            L, A, 2, 2
+        )  # broadcasted identity
 
-        for layer in self.structure:                       # only 'coh' layers
-            d   = layer.thickness                          # scalar parameter
-            n_l = layer.refractive_index(wl)               # (L,)
+        for layer in self.structure:  # only 'coh' layers
+            d = layer.thickness  # scalar parameter
+            n_l = layer.refractive_index(wl)  # (L,)
 
             # layer transfer matrix  → (L,A,2,2)
             T_l = self.T_matrix.coherent_layer(
-                pol=pol, n=n_l, d=d, wavelengths=wl, nx=nx)
+                pol=pol, n=n_l, d=d, wavelengths=wl, nx=nx
+            )
 
-            T_tot = T_tot @ T_l                            # batched matmul
+            T_tot = T_tot @ T_l  # batched matmul
 
         return T_tot

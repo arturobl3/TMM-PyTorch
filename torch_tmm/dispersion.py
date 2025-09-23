@@ -21,8 +21,10 @@ Key Components:
     - `BaseDispersion`       : Abstract base class for dispersion models
     - `Constant_epsilon`     : Constant (wavelength-independent) dielectric permittivity
     - `Lorentz`              : Classical Lorentz oscillator model
+    - `Drude`                : Free electron model for metallic dispersion
     - `Cauchy`               : Polynomial model for transparent materials (real + imaginary parts)
     - `TaucLorentz`          : Amorphous semiconductor model combining Lorentz and bandgap behavior
+    - `TabulatedData`        : Interpolation-based model using experimental/computed data
 
 Conventions:
     - Wavelengths are assumed to be in nanometers (nm)
@@ -41,7 +43,7 @@ Example:
 ================================================================================
 """
 
-from typing import List, Tuple, Union
+from typing import Union
 from abc import ABC, abstractmethod
 import torch
 import numpy as np
@@ -257,13 +259,15 @@ class Constant_epsilon(BaseDispersion):
 
     def __init__(
         self,
-        epsilon_const: torch.nn.Parameter,
+        epsilon_const: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
     ) -> None:
         """
         Initialize the Constant_epsilon instance.
 
         Args:
-            epsilon_const (torch.nn.Parameter): The constant dielectric permittivity value.
+            epsilon_const: The constant dielectric permittivity value. Can be a float, int,
+                          numpy array, torch.Tensor, or torch.nn.Parameter. Will be automatically
+                          converted to torch.nn.Parameter.
         """
         super().__init__()
         self.epsilon_const = epsilon_const
@@ -335,23 +339,24 @@ class Lorentz(BaseDispersion):
     Attributes:
         A (torch.nn.Parameter): Oscillator amplitude, eV**2.
         E0 (torch.nn.Parameter): Resonance energy, eV.
-        C (torch.nn.Parameter): Damping coefficient, eV.
+        Gamma (torch.nn.Parameter): Damping coefficient, eV.
     """
 
     _hc_over_e: torch.Tensor  # pre-computed in __init__ for speed
 
     def __init__(
         self,
-        A: torch.nn.Parameter,
-        E0: torch.nn.Parameter,
-        Gamma: torch.nn.Parameter,
+        A: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        E0: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        Gamma: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
     ) -> None:
         """
         Initialize the Lorentz dispersion model with given parameters.
+
         Args:
-            A (torch.nn.Parameter): Oscillator amplitude, eV**2.
-            E0 (torch.nn.Parameter): Resonance energy, eV.
-            Gamma (torch.nn.Parameter): Damping coefficient, eV.
+            A: Oscillator amplitude, eV**2. Will be automatically converted to torch.nn.Parameter.
+            E0: Resonance energy, eV. Will be automatically converted to torch.nn.Parameter.
+            Gamma: Damping coefficient, eV. Will be automatically converted to torch.nn.Parameter.
         """
         super().__init__()
         self.A = A
@@ -436,6 +441,132 @@ class Lorentz(BaseDispersion):
         return f"Lorentz Dispersion(Coefficients (A,E0,Gamma):{self.A, self.E0, self.Gamma})"
 
 
+class Drude(BaseDispersion):
+    """
+    Implements the Drude dispersion model for optical properties of metals.
+
+    This class describes the optical response of free electrons in metals using the Drude model.
+    The model is characterized by two main parameters: the plasma frequency (related to the
+    free electron density) and the collision frequency (related to scattering mechanisms).
+
+    The complex dielectric function is given by:
+        ε(ω) = 1 - ωₚ²/(ω² + iωΓ)
+    where:
+        - ωₚ is the plasma frequency (related to free electron density)
+        - Γ is the collision frequency (damping/scattering rate)
+        - ω is the angular frequency of light
+
+    This model is particularly suitable for describing the optical properties of metals
+    in the infrared and visible spectral regions.
+
+    Attributes:
+        omega_p (torch.nn.Parameter): Plasma frequency, eV.
+        gamma (torch.nn.Parameter): Collision frequency (damping), eV.
+    """
+
+    _hc_over_e: torch.Tensor  # pre-computed in __init__ for speed
+
+    def __init__(
+        self,
+        omega_p: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        gamma: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+    ) -> None:
+        """
+        Initialize the Drude dispersion model with given parameters.
+
+        Args:
+            omega_p: Plasma frequency, eV. Related to the free electron density.
+                     Will be automatically converted to torch.nn.Parameter.
+            gamma: Collision frequency (damping), eV. Related to electron scattering rate.
+                   Will be automatically converted to torch.nn.Parameter.
+        """
+        super().__init__()
+        self.omega_p = omega_p
+        self.gamma = gamma
+
+        hc_over_e = 1.2398419843320026e3  # (h·c/e) in  eV·nm
+        self.register_buffer(
+            "_hc_over_e", torch.tensor(hc_over_e, dtype=self.dtype, device=self.device)
+        )
+
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Complex refractive index **n(λ)** derived from the Drude model
+        permittivity.
+
+        Given the electric permittivity ε(λ) produced by
+        :meth:`~Drude.epsilon`, the refractive index is
+
+            n(λ) = √ε(λ)
+
+        with the principal square-root branch.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+            Complex tensor containing the refractive index at each provided
+            wavelength.
+        """
+        return torch.sqrt(self.epsilon(wavelengths))
+
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex dielectric permittivity **ε(λ)** using the Drude model.
+
+        The electric permittivity **ε(λ)** is computed using the formula:
+            ε = 1 - ωₚ²/(ω² + iωΓ)
+        where ω is the angular frequency calculated from:
+            ω = E/ħ = (h * c / e) / (wavelengths * ħ/e) = (h * c) / (wavelengths * ħ)
+        Since ω = E/ħ and we work with photon energies E, we use:
+            ε = 1 - ωₚ²/(E² + iEΓ) * (ħ/e)²
+        But for simplicity in eV units:
+            ε = 1 - ωₚ²/(E² + iEΓ)
+        where E is the photon energy in eV.
+
+        Constants:
+            - h (Planck constant): 6.62607015e-34 J·s
+            - c (Speed of light): 299792458 m/s
+            - e (Elementary charge): 1.60217663e-19 C
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+           The computed complex electric permittivity.
+        """
+        wavelengths = self._prepare_wavelengths(wavelengths)
+        E = self._hc_over_e.to(self.dtype) / wavelengths
+
+        c_dtype = self._as_complex_dtype(self.dtype)
+        E = E.to(dtype=c_dtype)
+        omega_p = self.omega_p.to(dtype=c_dtype)
+        gamma = self.gamma.to(dtype=c_dtype)
+
+        # Drude electric permittivity calculation
+        # ε = 1 - ωₚ²/(E² + iEΓ)
+        epsilon = 1 - omega_p**2 / (E**2 + 1j * E * gamma)
+
+        return epsilon
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the dispersion instance.
+
+        Returns:
+            str: A string summarizing the dispersion.
+        """
+        return f"Drude Dispersion(Coefficients (omega_p, gamma): {self.omega_p, self.gamma})"
+
+
 class Cauchy(BaseDispersion):
     """
     Implements the Cauchy dispersion model for optical materials.
@@ -448,7 +579,7 @@ class Cauchy(BaseDispersion):
         n = A + (1e4 * B) / wavelength² + (1e9 * C) / wavelength⁴
         k = D + (1e4 * E) / wavelength² + (1e9 * F) / wavelength⁴
     so that the complex refractive index is:
-        ñ = n + i * k
+        ñ = n + i * k
 
     Attributes:
         A, B, C (torch.nn.Parameter): Coefficients for the real part of the refractive index.
@@ -457,23 +588,23 @@ class Cauchy(BaseDispersion):
 
     def __init__(
         self,
-        A: torch.nn.Parameter,
-        B: torch.nn.Parameter = 0,
-        C: torch.nn.Parameter = 0,
-        D: torch.nn.Parameter = 0,
-        E: torch.nn.Parameter = 0,
-        F: torch.nn.Parameter = 0,
+        A: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        B: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        C: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        D: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        E: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
+        F: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter] = 0,
     ) -> None:
         """
         Initialize the Cauchy dispersion model with specified coefficients.
 
         Args:
-            A (torch.nn.Parameter): Coefficient for the constant term in the real part.
-            B (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the real part.
-            C (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the real part.
-            D (torch.nn.Parameter): Coefficient for the constant term in the imaginary part.
-            E (torch.nn.Parameter): Coefficient for the 1/wavelength² term in the imaginary part.
-            F (torch.nn.Parameter): Coefficient for the 1/wavelength⁴ term in the imaginary part.
+            A: Coefficient for the constant term in the real part. Will be automatically converted to torch.nn.Parameter.
+            B: Coefficient for the 1/wavelength² term in the real part. Will be automatically converted to torch.nn.Parameter.
+            C: Coefficient for the 1/wavelength⁴ term in the real part. Will be automatically converted to torch.nn.Parameter.
+            D: Coefficient for the constant term in the imaginary part. Will be automatically converted to torch.nn.Parameter.
+            E: Coefficient for the 1/wavelength² term in the imaginary part. Will be automatically converted to torch.nn.Parameter.
+            F: Coefficient for the 1/wavelength⁴ term in the imaginary part. Will be automatically converted to torch.nn.Parameter.
         """
         super().__init__()
         self.A = A
@@ -569,26 +700,26 @@ class TaucLorentz(BaseDispersion):
         Eg (torch.nn.Parameter): Optical band gap energy.
         A (torch.nn.Parameter): Amplitude of the transition.
         E0 (torch.nn.Parameter): Resonance energy.
-        C (torch.nn.Parameter): Broadening (damping) parameter.
+        Gamma (torch.nn.Parameter): Broadening (damping) parameter.
     """
 
     _hc_over_e: torch.Tensor  # pre-computed in __init__ for speed
 
     def __init__(
         self,
-        Eg: torch.nn.Parameter,
-        A: torch.nn.Parameter,
-        E0: torch.nn.Parameter,
-        Gamma: torch.nn.Parameter,
+        Eg: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        A: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        E0: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
+        Gamma: Union[float, int, np.ndarray, torch.Tensor, torch.nn.Parameter],
     ) -> None:
         """
         Initialize the TaucLorentz model with the specified parameters.
 
         Args:
-            Eg (torch.nn.Parameter): Optical band gap energy.
-            A (torch.nn.Parameter): Amplitude of the transition.
-            E0 (torch.nn.Parameter): Resonance energy.
-            Gamma (torch.nn.Parameter): Broadening (damping) parameter.
+            Eg: Optical band gap energy. Will be automatically converted to torch.nn.Parameter.
+            A: Amplitude of the transition. Will be automatically converted to torch.nn.Parameter.
+            E0: Resonance energy. Will be automatically converted to torch.nn.Parameter.
+            Gamma: Broadening (damping) parameter. Will be automatically converted to torch.nn.Parameter.
         """
         super().__init__()
         self.Eg = Eg
@@ -732,3 +863,175 @@ class TaucLorentz(BaseDispersion):
                  data type, and device.
         """
         return f"TaucLorentz Dispersion(Coefficients(Eg, A, E0, Gamma):{[self.Eg, self.A, self.E0, self.Gamma]})"
+
+
+class TabulatedData(BaseDispersion):
+    """
+    Implements a tabulated dispersion model using interpolation.
+
+    This class allows for the use of experimental or pre-computed dispersion data
+    by interpolating between tabulated wavelength and refractive index values.
+
+    Attributes:
+        wavelengths_table (torch.Tensor): Tabulated wavelengths in nanometers (must be sorted).
+        refractive_index_table (torch.Tensor): Complex refractive index values at the tabulated wavelengths.
+    """
+
+    def __init__(
+        self,
+        wavelengths_table: torch.Tensor,
+        refractive_index_table: torch.Tensor,
+    ) -> None:
+        """
+        Initialize the TabulatedData dispersion model.
+
+        Args:
+            wavelengths_table (torch.Tensor): 1D tensor of wavelengths in nanometers, must be sorted in ascending order.
+            refractive_index_table (torch.Tensor): 1D tensor of complex refractive index values corresponding to wavelengths_table.
+
+        Raises:
+            ValueError: If wavelengths_table and refractive_index_table have different lengths.
+            ValueError: If wavelengths_table is not sorted in ascending order.
+        """
+        super().__init__()
+
+        # Validate inputs
+        if wavelengths_table.shape[0] != refractive_index_table.shape[0]:
+            raise ValueError(
+                "wavelengths_table and refractive_index_table must have the same length"
+            )
+
+        if wavelengths_table.numel() < 2:
+            raise ValueError("At least 2 data points are required for interpolation")
+
+        # Check if wavelengths are sorted
+        if not torch.all(wavelengths_table[1:] > wavelengths_table[:-1]):
+            raise ValueError("wavelengths_table must be sorted in ascending order")
+
+        # Register as buffers so they move with the module but don't require gradients
+        # Ensure proper dtypes from the start
+        wavelengths_tensor = wavelengths_table.to(dtype=self.dtype, device=self.device)
+        refractive_index_tensor = refractive_index_table.to(
+            dtype=self._as_complex_dtype(self.dtype), device=self.device
+        )
+
+        self.register_buffer("wavelengths_table", wavelengths_tensor)
+        self.register_buffer("refractive_index_table", refractive_index_tensor)
+
+    def refractive_index(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex refractive index at given wavelengths using linear interpolation.
+
+        Raises an error if wavelengths are outside the tabulated range.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+            Complex refractive index at each wavelength, computed by interpolating the tabulated data.
+
+        Raises
+        ------
+        ValueError
+            If any wavelength is outside the tabulated wavelength range.
+        """
+        wavelengths = self._prepare_wavelengths(wavelengths)
+        c_dtype = self._as_complex_dtype(self.dtype)
+
+        # Convert wavelengths to the same dtype as the table for interpolation
+        wavelengths = wavelengths.to(dtype=self.dtype, device=self.device)
+
+        # Get tabulated data
+        wavelengths_table = getattr(self, "wavelengths_table")
+        refractive_index_table = getattr(self, "refractive_index_table")
+
+        # Check for out-of-bounds wavelengths
+        min_wavelength = wavelengths_table.min()
+        max_wavelength = wavelengths_table.max()
+
+        out_of_bounds_low = wavelengths < min_wavelength
+        out_of_bounds_high = wavelengths > max_wavelength
+
+        if torch.any(out_of_bounds_low) or torch.any(out_of_bounds_high):
+            if torch.any(out_of_bounds_low):
+                min_requested = wavelengths[out_of_bounds_low].min().item()
+                raise ValueError(
+                    f"Wavelength {min_requested:.2f} nm is below the minimum tabulated "
+                    f"wavelength of {min_wavelength.item():.2f} nm. Extrapolation is not supported."
+                )
+            if torch.any(out_of_bounds_high):
+                max_requested = wavelengths[out_of_bounds_high].max().item()
+                raise ValueError(
+                    f"Wavelength {max_requested:.2f} nm is above the maximum tabulated "
+                    f"wavelength of {max_wavelength.item():.2f} nm. Extrapolation is not supported."
+                )
+
+        # Use torch.nn.functional.interpolate or manual interpolation
+        # Since torch.interp might not be available, we'll use manual linear interpolation
+        def linear_interp_1d(
+            x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor
+        ) -> torch.Tensor:
+            """Linear interpolation for 1D tensors."""
+            # Find indices for interpolation
+            indices = torch.searchsorted(xp, x, right=False)
+            indices = torch.clamp(indices, 1, len(xp) - 1)
+
+            # Get surrounding points
+            x0 = xp[indices - 1]
+            x1 = xp[indices]
+            y0 = fp[indices - 1]
+            y1 = fp[indices]
+
+            # Linear interpolation: y = y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+            # Handle case where x1 == x0 (avoid division by zero)
+            denom = x1 - x0
+            denom = torch.where(denom == 0, torch.ones_like(denom), denom)
+            weights = (x - x0) / denom
+
+            return y0 + weights * (y1 - y0)
+
+        # Perform interpolation for real and imaginary parts separately
+        n_real = linear_interp_1d(
+            wavelengths, wavelengths_table, refractive_index_table.real
+        )
+        n_imag = linear_interp_1d(
+            wavelengths, wavelengths_table, refractive_index_table.imag
+        )
+
+        # Combine real and imaginary parts
+        return (n_real + 1j * n_imag).to(dtype=c_dtype)
+
+    def epsilon(self, wavelengths: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the complex dielectric permittivity from the interpolated refractive index.
+
+        The permittivity is computed as ε(λ) = ñ(λ)² where ñ(λ) is obtained from interpolation.
+
+        Parameters
+        ----------
+        wavelengths : torch.Tensor
+            Wavelengths in **nanometres** (positive, floating tensor).
+
+        Returns
+        -------
+        torch.Tensor
+            Complex dielectric permittivity at each wavelength.
+        """
+        return self.refractive_index(wavelengths) ** 2
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the TabulatedData dispersion instance.
+
+        Returns:
+            str: A string summarizing the tabulated dispersion model.
+        """
+        wavelengths_table = getattr(self, "wavelengths_table")
+        wl_min = wavelengths_table[0].item()
+        wl_max = wavelengths_table[-1].item()
+        n_points = wavelengths_table.shape[0]
+        return f"TabulatedData Dispersion(wavelength range: {wl_min:.1f}-{wl_max:.1f} nm, {n_points} data points)"
